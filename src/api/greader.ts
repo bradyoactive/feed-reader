@@ -1,9 +1,13 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, request } from './http';
 import { AuthError, HttpError, UNCATEGORIZED } from './types';
-import type { Backend, Category, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 const PAGE_SIZE = 50;
+/** Past this many new articles, a full reload is cheaper than an incremental sync. */
+const MAX_CHANGES = 1000;
+/** Largest unread/starred id list we'll download to compare states. */
+const MAX_IDS = 20000;
 const READING_LIST = 'user/-/state/com.google/reading-list';
 const READ = 'user/-/state/com.google/read';
 const STARRED = 'user/-/state/com.google/starred';
@@ -52,6 +56,18 @@ export async function greaderLogin(url: string, username: string, password: stri
   return auth;
 }
 
+const ITEM_PREFIX = 'tag:google.com,2005:reader/item/';
+
+/**
+ * Item ids come in two forms: long ("tag:google.com,2005:reader/item/000000000000001f", hex) from
+ * stream/contents, and short (decimal "31") from stream/items/ids. Normalise both to the long form.
+ */
+export function normalizeItemId(id: string): string {
+  if (id.startsWith(ITEM_PREFIX)) return ITEM_PREFIX + id.slice(ITEM_PREFIX.length).toLowerCase().padStart(16, '0');
+  if (/^-?\d+$/.test(id)) return ITEM_PREFIX + BigInt.asUintN(64, BigInt(id)).toString(16).padStart(16, '0');
+  return id;
+}
+
 export function toEntry(item: GrItem): Entry {
   const html = item.content?.content ?? item.summary?.content ?? '';
   const url = item.canonical?.[0]?.href ?? item.alternate?.[0]?.href ?? '';
@@ -61,7 +77,7 @@ export function toEntry(item: GrItem): Entry {
       ? item.published * 1000
       : Number(item.crawlTimeMsec ?? 0) || Math.floor(Number(item.timestampUsec ?? 0) / 1000);
   return {
-    id: item.id,
+    id: normalizeItemId(item.id),
     feedId: item.origin?.streamId ?? '',
     title: item.title || '(untitled)',
     url: safeUrl(url) ?? '',
@@ -221,6 +237,44 @@ export class GReaderBackend implements Backend {
     return { entries, nextCursor: c };
   }
 
+  /** All item ids in a stream, or undefined if there are more than we're willing to list. */
+  private async itemIds(params: Record<string, string>): Promise<Set<string> | undefined> {
+    const r = await this.get<{ itemRefs?: { id: string }[] }>('/reader/api/0/stream/items/ids', {
+      ...params,
+      n: String(MAX_IDS),
+    });
+    const refs = r.itemRefs ?? [];
+    return refs.length >= MAX_IDS ? undefined : new Set(refs.map((x) => normalizeItemId(x.id)));
+  }
+
+  async getChanges(since: number): Promise<Changes> {
+    // New articles: everything in the reading list newer than the last sync (`ot`, in seconds).
+    const entries: Entry[] = [];
+    let c: string | undefined;
+    let truncated = true;
+    for (let i = 0; i < MAX_CHANGES / 250; i++) {
+      const page = await this.get<GrStream>('/reader/api/0/stream/contents', {
+        s: READING_LIST,
+        ot: String(Math.floor(since / 1000)),
+        n: '250',
+        ...(c ? { c } : {}),
+      });
+      entries.push(...(page.items ?? []).map(toEntry));
+      c = page.continuation;
+      if (!c) {
+        truncated = false;
+        break;
+      }
+    }
+    // Read/star changes: the API can't list "what changed", so take the full unread and starred id
+    // lists (ids only, so cheap) and let the caller compare them with what it has.
+    const [unreadIds, starredIds] = await Promise.all([
+      this.itemIds({ s: READING_LIST, xt: READ }),
+      this.itemIds({ s: STARRED }),
+    ]);
+    return { entries, unreadIds, starredIds, truncated };
+  }
+
   async setRead(entries: Entry[], read: boolean): Promise<void> {
     // Batch to keep request bodies a sensible size.
     for (let i = 0; i < entries.length; i += 100) {
@@ -242,9 +296,5 @@ export class GReaderBackend implements Backend {
     }
     const s = scope.kind === 'all' ? READING_LIST : scope.id;
     await this.post('/reader/api/0/mark-all-as-read', [['s', s], ['ts', ts]]);
-  }
-
-  async refreshFeeds(): Promise<void> {
-    // The Google Reader API has no standard "refresh now" call; the server fetches on its own schedule.
   }
 }

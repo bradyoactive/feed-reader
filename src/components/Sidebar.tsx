@@ -73,7 +73,7 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const model = useSidebarModel();
   const { counts, ready: countsReady } = useSidebarCounts(filter);
   const unread = useUnreadCounts();
-  const { refresh } = useActions();
+  const { sync } = useActions();
   const { open, toggle, ensure } = useOpenCategories();
   const [refreshing, setRefreshing] = useState(false);
   const synced = useRelativeTime(unread.dataUpdatedAt);
@@ -113,12 +113,12 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         <span className="mr-auto text-[17px] font-bold tracking-tight">Skim</span>
         <ThemeButton size={touch ? 44 : 36} />
         <button
-          aria-label="Refresh feeds"
-          title="Refresh feeds"
+          aria-label="Sync with server"
+          title="Sync with server"
           disabled={refreshing}
           onClick={async () => {
             setRefreshing(true);
-            await refresh();
+            await sync();
             setRefreshing(false);
           }}
           className="flex items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"

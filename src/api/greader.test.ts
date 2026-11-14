@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GReaderBackend, greaderLogin, toEntry } from './greader';
+import { GReaderBackend, greaderLogin, normalizeItemId, toEntry } from './greader';
 import { AuthError, UNCATEGORIZED } from './types';
 
 const config = { kind: 'greader' as const, url: 'https://rss.test/api/greader.php', username: 'me', authToken: 'AUTH' };
@@ -114,9 +114,38 @@ describe('greader', () => {
     await b.setRead([toEntry(item(1)), toEntry(item(2))], true);
     expect(tokens).toBe(2);
     const last = new URLSearchParams(bodies[1]);
-    expect(last.getAll('i')).toEqual(['tag:google.com,2005:reader/item/1', 'tag:google.com,2005:reader/item/2']);
+    expect(last.getAll('i')).toEqual(['tag:google.com,2005:reader/item/0000000000000001', 'tag:google.com,2005:reader/item/0000000000000002']);
     expect(last.get('a')).toBe('user/-/state/com.google/read');
     expect(last.get('T')).toBe('T2');
+  });
+
+  it('normalises short decimal and long hex item ids to the same form', () => {
+    expect(normalizeItemId('31')).toBe('tag:google.com,2005:reader/item/000000000000001f');
+    expect(normalizeItemId('tag:google.com,2005:reader/item/1F')).toBe('tag:google.com,2005:reader/item/000000000000001f');
+    // FreshRSS ids are microsecond timestamps, beyond Number precision.
+    expect(normalizeItemId('1731500000123456')).toBe(`tag:google.com,2005:reader/item/${(1731500000123456n).toString(16).padStart(16, '0')}`);
+  });
+
+  it('syncs new items with ot, and full unread/starred id lists', async () => {
+    const urls: URL[] = [];
+    mockFetch((url) => {
+      urls.push(url);
+      if (url.pathname.endsWith('/stream/items/ids')) {
+        const starred = url.searchParams.get('s') === 'user/-/state/com.google/starred';
+        return json({ itemRefs: starred ? [{ id: '2' }] : [{ id: '1' }, { id: '3' }] });
+      }
+      return json({ items: [item(3)] });
+    });
+    const changes = await new GReaderBackend(config).getChanges(1_800_000_000_900);
+    const contents = urls.find((u) => u.pathname.endsWith('/stream/contents'))!;
+    expect(contents.searchParams.get('ot')).toBe('1800000000');
+    expect(contents.searchParams.get('s')).toBe('user/-/state/com.google/reading-list');
+    const unreadReq = urls.find((u) => u.pathname.endsWith('/items/ids') && u.searchParams.get('xt'))!;
+    expect(unreadReq.searchParams.get('xt')).toBe('user/-/state/com.google/read');
+    expect(changes.entries).toHaveLength(1);
+    expect([...changes.unreadIds!]).toEqual([normalizeItemId('1'), normalizeItemId('3')]);
+    expect([...changes.starredIds!]).toEqual([normalizeItemId('2')]);
+    expect(changes.truncated).toBe(false);
   });
 
   it('marks a folder read with a microsecond timestamp', async () => {

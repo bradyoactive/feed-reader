@@ -1,4 +1,4 @@
-import type { Backend, Category, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -140,7 +140,30 @@ export class DemoBackend implements Backend {
     });
   }
 
-  async refreshFeeds() {
-    await wait(300);
+  private arrivals = 0;
+
+  /** Each sync, one new article "arrives" so the incremental sync is visible without a real server. */
+  async getChanges(since: number): Promise<Changes> {
+    await wait(200);
+    const [feedId, title, summary] = SAMPLES[this.arrivals % SAMPLES.length];
+    const fresh: Entry = {
+      id: `new${this.arrivals++}`,
+      feedId,
+      title: `New: ${title}`,
+      url: `https://example.com/new/${this.arrivals}`,
+      summary,
+      imageUrl: demoImage(this.arrivals + 3),
+      published: Math.max(Date.now(), since + 1),
+      read: false,
+      starred: false,
+    };
+    this.entries.unshift(fresh);
+    // Report the full read/starred state, the way Google Reader API servers do.
+    return {
+      entries: [{ ...fresh }],
+      unreadIds: new Set(this.entries.filter((e) => !e.read).map((e) => e.id)),
+      starredIds: new Set(this.entries.filter((e) => e.starred).map((e) => e.id)),
+      truncated: false,
+    };
   }
 }

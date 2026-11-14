@@ -53,6 +53,18 @@ export interface EntryQuery {
   feedIds: Set<string>;
 }
 
+/** What changed on the server since a given time. */
+export interface Changes {
+  /** Entries added or modified since then, with their current state. */
+  entries: Entry[];
+  /** When given, the complete set of unread ids: any other entry is read. */
+  unreadIds?: Set<string>;
+  /** When given, the complete set of starred ids: any other entry is unstarred. */
+  starredIds?: Set<string>;
+  /** True when there were too many changes to list; the caller should reload everything instead. */
+  truncated: boolean;
+}
+
 export interface Backend {
   readonly kind: BackendKind;
   getCategories(): Promise<Category[]>;
@@ -68,8 +80,8 @@ export interface Backend {
   setStarred(entry: Entry, starred: boolean): Promise<void>;
   /** Marks everything in scope read that was published before `before` (ms), where the server supports it. */
   markScopeRead(scope: Scope, before: number): Promise<void>;
-  /** Asks the server to fetch its feeds now, where supported. */
-  refreshFeeds(): Promise<void>;
+  /** New articles and read/star changes since `since` (ms), made here or on another device. */
+  getChanges(since: number): Promise<Changes>;
 }
 
 export class AuthError extends Error {

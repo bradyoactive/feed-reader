@@ -6,16 +6,31 @@ import {
   type InfiniteData,
   type QueryClient,
 } from '@tanstack/react-query';
-import type { Backend, Category, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
+import type { Backend, Category, Changes, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
 import { describeError, UNCATEGORIZED } from '../api/types';
 import { scopeKey } from '../lib/route';
 import { toast } from '../lib/toast';
 
 export const BackendContext = createContext<Backend | null>(null);
 
+/** When each connection last synced. The first use counts as a sync: the initial load fetches everything. */
+const lastSync = new WeakMap<Backend, number>();
+/** When you last changed each entry here, so a sync doesn't overwrite a change still on its way to the server. */
+const localEdits = new Map<string, number>();
+/** Local changes this recent win over what a sync reports. */
+const LOCAL_EDIT_GRACE = 10_000;
+/** Ask for a little before the last sync to cover clock differences between this device and the server. */
+const SYNC_OVERLAP = 60_000;
+
+function noteLocalEdit(ids: Iterable<string>) {
+  const now = Date.now();
+  for (const id of ids) localEdits.set(id, now);
+}
+
 export function useBackend(): Backend {
   const b = useContext(BackendContext);
   if (!b) throw new Error('useBackend outside BackendContext');
+  if (!lastSync.has(b)) lastSync.set(b, Date.now());
   return b;
 }
 
@@ -104,7 +119,7 @@ export interface Actions {
   setRead(entries: Entry[], read: boolean): void;
   setStarred(entry: Entry, starred: boolean): void;
   markScopeRead(scope: Scope, before: number): Promise<void>;
-  refresh(): Promise<void>;
+  sync(): Promise<void>;
 }
 
 /**
@@ -130,6 +145,7 @@ export function useActions(): Actions {
       const ids = new Set(changing.map((e) => e.id));
       const deltas: Counts = {};
       for (const e of changing) deltas[e.feedId] = (deltas[e.feedId] ?? 0) + (read ? -1 : 1);
+      noteLocalEdit(ids);
       patchEntries(qc, (e) => (ids.has(e.id) ? { ...e, read } : e));
       bump(qc, keys.unread, deltas);
       b.setRead(changing, read).catch(resync);
@@ -140,6 +156,7 @@ export function useActions(): Actions {
   const setStarred = useCallback(
     (entry: Entry, starred: boolean) => {
       if (entry.starred === starred) return;
+      noteLocalEdit([entry.id]);
       patchEntries(qc, (e) => (e.id === entry.id ? { ...e, starred } : e));
       bump(qc, keys.starred, { [entry.feedId]: starred ? 1 : -1 });
       b.setStarred(entry, starred).catch(resync);
@@ -151,7 +168,11 @@ export function useActions(): Actions {
     async (scope: Scope, before: number) => {
       const feeds = qc.getQueryData<Feed[]>(keys.feeds) ?? [];
       const inScope = feedsInScope(scope, feeds);
-      patchEntries(qc, (e) => (inScope.has(e.feedId) && e.published <= before ? { ...e, read: true } : e));
+      patchEntries(qc, (e) => {
+        if (!inScope.has(e.feedId) || e.published > before) return e;
+        noteLocalEdit([e.id]);
+        return e.read ? e : { ...e, read: true };
+      });
       qc.setQueryData<Counts>(keys.unread, (old) => {
         if (!old) return old;
         const next = { ...old };
@@ -170,16 +191,80 @@ export function useActions(): Actions {
     [b, qc, resync],
   );
 
-  const refresh = useCallback(async () => {
+  // Pull what changed on the server since the last sync. The server fetches feeds on its own schedule;
+  // this doesn't ask it to.
+  const sync = useCallback(async () => {
+    const startedAt = Date.now();
+    let changes: Changes;
     try {
-      await b.refreshFeeds();
+      changes = await b.getChanges((lastSync.get(b) ?? startedAt) - SYNC_OVERLAP);
     } catch (err) {
       toast(describeError(err), 'error');
+      return;
     }
-    await qc.invalidateQueries();
+    lastSync.set(b, startedAt);
+    if (changes.truncated) {
+      await qc.invalidateQueries();
+      toast('A lot changed since the last sync, so everything was reloaded.');
+      return;
+    }
+    const newCount = applyChanges(qc, changes, (id) => (localEdits.get(id) ?? 0) >= startedAt - LOCAL_EDIT_GRACE);
+    // Counts and the feed list are small: reload them outright.
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['counts'] }),
+      qc.invalidateQueries({ queryKey: keys.feeds }),
+      qc.invalidateQueries({ queryKey: keys.categories }),
+    ]);
+    toast(newCount ? `${newCount} new article${newCount === 1 ? '' : 's'}` : 'Up to date');
   }, [b, qc]);
 
-  return useMemo(() => ({ setRead, setStarred, markScopeRead, refresh }), [setRead, setStarred, markScopeRead, refresh]);
+  return useMemo(() => ({ setRead, setStarred, markScopeRead, sync }), [setRead, setStarred, markScopeRead, sync]);
+}
+
+function parseScopeKey(key: string): Scope {
+  if (key === 'all') return { kind: 'all' };
+  const i = key.indexOf(':');
+  return { kind: key.slice(0, i) as 'category' | 'feed', id: key.slice(i + 1) };
+}
+
+const matchesFilter = (e: Entry, filter: Filter) => (filter === 'unread' ? !e.read : filter === 'starred' ? e.starred : true);
+
+/**
+ * Applies a sync to every loaded list: updates read/starred on entries already there, and adds new
+ * entries to the top of each list they belong in. Returns how many unread articles were new.
+ */
+export function applyChanges(qc: QueryClient, changes: Changes, keepLocal: (id: string) => boolean): number {
+  const changed = new Map(changes.entries.map((e) => [e.id, e]));
+
+  patchEntries(qc, (e) => {
+    if (keepLocal(e.id)) return e;
+    const c = changed.get(e.id);
+    const read = c ? c.read : changes.unreadIds ? !changes.unreadIds.has(e.id) : e.read;
+    const starred = c ? c.starred : changes.starredIds ? changes.starredIds.has(e.id) : e.starred;
+    return read === e.read && starred === e.starred ? e : { ...e, read, starred };
+  });
+
+  const queries = qc.getQueryCache().findAll({ queryKey: ['entries'] });
+  const known = new Set<string>();
+  for (const q of queries) {
+    for (const p of (q.state.data as InfiniteData<Page> | undefined)?.pages ?? []) p.entries.forEach((e) => known.add(e.id));
+  }
+  const fresh = changes.entries.filter((e) => !known.has(e.id) && !keepLocal(e.id));
+  if (fresh.length === 0) return 0;
+
+  const feeds = qc.getQueryData<Feed[]>(keys.feeds) ?? [];
+  for (const q of queries) {
+    const [, sk, filter] = q.queryKey as [string, string, Filter];
+    const inScope = feedsInScope(parseScopeKey(sk), feeds);
+    const add = fresh.filter((e) => inScope.has(e.feedId) && matchesFilter(e, filter));
+    if (add.length === 0) continue;
+    qc.setQueryData<InfiniteData<Page>>(q.queryKey, (data) => {
+      if (!data || data.pages.length === 0) return data;
+      const [first, ...rest] = data.pages;
+      return { ...data, pages: [{ ...first, entries: [...add, ...first.entries] }, ...rest] };
+    });
+  }
+  return fresh.filter((e) => !e.read).length;
 }
 
 export function useTotalCounts(enabled: boolean) {
