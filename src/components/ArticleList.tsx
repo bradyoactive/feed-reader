@@ -17,6 +17,7 @@ interface Props {
   onLoadMore(): void;
   /** Same as the header's Mark all read: marks the whole view read and moves on. */
   onMarkAll(): void;
+  emptyTitle?: string;
   emptyMessage: string;
 }
 
@@ -45,7 +46,7 @@ function DayHeader({ group, onMarkDay }: { group: DayGroup; onMarkDay(g: DayGrou
   );
 }
 
-export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, onMarkAll, emptyMessage }: Props) {
+export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, onMarkAll, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
   const groups = useMemo(() => groupByDay(entries), [entries]);
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
   const groupCounts = useMemo(() => groups.map((g) => g.entries.length), [groups]);
@@ -67,7 +68,7 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
   if (flat.length === 0) {
     return (
       <div className={`${column} flex flex-col items-center gap-2 py-24 text-center`}>
-        <span className="text-lg font-semibold">You're all caught up</span>
+        <span className="text-lg font-semibold">{emptyTitle}</span>
         <span className="text-sm text-muted">{emptyMessage}</span>
       </div>
     );

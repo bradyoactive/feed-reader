@@ -1,6 +1,7 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, request } from './http';
-import type { Backend, Category, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import { UNCATEGORIZED } from './types';
+import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 const PAGE_SIZE = 50;
 /** Past this many changes, a full reload is cheaper than an incremental sync. */
@@ -193,6 +194,26 @@ export class MinifluxBackend implements Backend {
     }
     // A partial list can't say what was unstarred, so only pass it on when it's complete.
     return { entries, starredIds: starredComplete ? starredIds : undefined, truncated };
+  }
+
+  async subscribe(url: string, category: CategoryChoice): Promise<string> {
+    let categoryId: number | undefined;
+    if ('newTitle' in category) {
+      const created = await this.call<MfCategory>('/v1/categories', { method: 'POST', body: JSON.stringify({ title: category.newTitle }) });
+      categoryId = created.id;
+    } else if (category.id !== UNCATEGORIZED) {
+      categoryId = Number(category.id);
+    }
+    // Miniflux fetches and checks the feed before answering, so a bad address fails here.
+    const r = await this.call<{ feed_id: number }>('/v1/feeds', {
+      method: 'POST',
+      body: JSON.stringify({ feed_url: url, ...(categoryId != null ? { category_id: categoryId } : {}) }),
+    });
+    return String(r.feed_id);
+  }
+
+  async unsubscribe(feedId: string): Promise<void> {
+    await this.call(`/v1/feeds/${feedId}`, { method: 'DELETE' });
   }
 
   async setRead(entries: Entry[], read: boolean): Promise<void> {

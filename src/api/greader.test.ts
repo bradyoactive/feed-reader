@@ -148,6 +148,37 @@ describe('greader', () => {
     expect(changes.truncated).toBe(false);
   });
 
+  it('subscribes with quickadd, then files the feed under its category', async () => {
+    const posts: { path: string; body: URLSearchParams }[] = [];
+    mockFetch((url, init) => {
+      if (url.pathname.endsWith('/token')) return new Response('T');
+      posts.push({ path: url.pathname, body: new URLSearchParams(String(init.body)) });
+      return url.pathname.endsWith('/quickadd') ? json({ numResults: 1, streamId: 'feed/77' }) : new Response('OK');
+    });
+    const id = await new GReaderBackend(config).subscribe('https://blog.test/feed.xml', { newTitle: 'Blogs' });
+    expect(id).toBe('feed/77');
+    expect(posts[0].path).toMatch(/\/subscription\/quickadd$/);
+    expect(posts[0].body.get('quickadd')).toBe('https://blog.test/feed.xml');
+    expect(posts[1].path).toMatch(/\/subscription\/edit$/);
+    expect(Object.fromEntries(posts[1].body)).toMatchObject({ ac: 'edit', s: 'feed/77', a: 'user/-/label/Blogs' });
+  });
+
+  it('reports a failed quickadd', async () => {
+    mockFetch((url) => (url.pathname.endsWith('/token') ? new Response('T') : json({ numResults: 0 })));
+    await expect(new GReaderBackend(config).subscribe('https://nope.test', { id: 'user/-/label/Tech' })).rejects.toThrow(/couldn’t subscribe/);
+  });
+
+  it('unsubscribes with subscription/edit', async () => {
+    const bodies: URLSearchParams[] = [];
+    mockFetch((url, init) => {
+      if (url.pathname.endsWith('/token')) return new Response('T');
+      bodies.push(new URLSearchParams(String(init.body)));
+      return new Response('OK');
+    });
+    await new GReaderBackend(config).unsubscribe('feed/5');
+    expect(Object.fromEntries(bodies[0])).toMatchObject({ ac: 'unsubscribe', s: 'feed/5' });
+  });
+
   it('marks a folder read with a microsecond timestamp', async () => {
     const bodies: URLSearchParams[] = [];
     mockFetch((url, init) => {

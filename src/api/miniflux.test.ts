@@ -107,6 +107,32 @@ describe('miniflux', () => {
     expect(changes.truncated).toBe(false);
   });
 
+  it('subscribes into a new category, then creates the feed', async () => {
+    const calls: { path: string; method?: string; body?: unknown }[] = [];
+    mockFetch((url, init) => {
+      calls.push({ path: url.pathname, method: init.method, body: init.body && JSON.parse(String(init.body)) });
+      return url.pathname === '/v1/categories' ? { id: 12, title: 'Blogs' } : { feed_id: 99 };
+    });
+    const id = await new MinifluxBackend(config).subscribe('https://blog.test/feed.xml', { newTitle: 'Blogs' });
+    expect(id).toBe('99');
+    expect(calls).toEqual([
+      { path: '/v1/categories', method: 'POST', body: { title: 'Blogs' } },
+      { path: '/v1/feeds', method: 'POST', body: { feed_url: 'https://blog.test/feed.xml', category_id: 12 } },
+    ]);
+  });
+
+  it('shows Miniflux’s own error message, e.g. a duplicate feed', async () => {
+    mockFetch(() => new Response(JSON.stringify({ error_message: 'This feed already exists.' }), { status: 400 }));
+    await expect(new MinifluxBackend(config).subscribe('https://x.test/feed', { id: '1' })).rejects.toThrow('This feed already exists.');
+  });
+
+  it('unsubscribes with DELETE', async () => {
+    const f = mockFetch(() => undefined);
+    await new MinifluxBackend(config).unsubscribe('42');
+    expect(String(f.mock.calls[0][0])).toBe('https://rss.test/v1/feeds/42');
+    expect(f.mock.calls[0][1]!.method).toBe('DELETE');
+  });
+
   it('marks read in one request', async () => {
     const f = mockFetch(() => undefined);
     await new MinifluxBackend(config).setRead([toEntry(entry(1, '2026-11-11T10:00:00Z')), toEntry(entry(2, '2026-11-11T10:00:00Z'))], true);

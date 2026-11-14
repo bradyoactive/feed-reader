@@ -1,7 +1,7 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
-import { joinUrl, request } from './http';
+import { joinUrl, readableError, request } from './http';
 import { AuthError, HttpError, UNCATEGORIZED } from './types';
-import type { Backend, Category, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 const PAGE_SIZE = 50;
 /** Past this many new articles, a full reload is cheaper than an incremental sync. */
@@ -120,7 +120,7 @@ export class GReaderBackend implements Backend {
   }
 
   /** POSTs a write, fetching a fresh write token once if the server says it went stale. */
-  private async post(path: string, params: [string, string][]): Promise<void> {
+  private async post(path: string, params: [string, string][]): Promise<string> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const body = new URLSearchParams(params);
       body.set('T', await this.token(attempt > 0));
@@ -130,12 +130,40 @@ export class GReaderBackend implements Backend {
         headers: { ...this.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
       });
-      if (res.ok) return;
+      if (res.ok) return res.text();
       const badToken = res.headers.get('X-Reader-Google-Bad-Token') === 'true';
       if (res.status === 401 && badToken && attempt === 0) continue;
       if (res.status === 401 || res.status === 403) throw new AuthError();
-      throw new HttpError(res.status, res.statusText);
+      let detail = res.statusText;
+      try {
+        detail = readableError(await res.text()) || detail;
+      } catch {
+        /* keep statusText */
+      }
+      throw new HttpError(res.status, detail);
     }
+    throw new AuthError();
+  }
+
+  async subscribe(url: string, category: CategoryChoice): Promise<string> {
+    // quickadd subscribes and tells us the new feed's stream id; then put it in its folder.
+    const text = await this.post('/reader/api/0/subscription/quickadd', [['quickadd', url]]);
+    let streamId: string | undefined;
+    try {
+      streamId = (JSON.parse(text) as { streamId?: string }).streamId;
+    } catch {
+      /* not JSON */
+    }
+    if (!streamId) throw new Error('The server couldn’t subscribe to that address. Check it’s a feed URL.');
+    const label = 'newTitle' in category ? `user/-/label/${category.newTitle}` : category.id !== UNCATEGORIZED ? category.id : null;
+    if (label) await this.post('/reader/api/0/subscription/edit', [['ac', 'edit'], ['s', streamId], ['a', label]]);
+    this.subscriptions = null;
+    return streamId;
+  }
+
+  async unsubscribe(feedId: string): Promise<void> {
+    await this.post('/reader/api/0/subscription/edit', [['ac', 'unsubscribe'], ['s', feedId]]);
+    this.subscriptions = null;
   }
 
   private subscriptions: Promise<GrSubscription[]> | null = null;

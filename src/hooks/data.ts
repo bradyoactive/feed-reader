@@ -6,7 +6,7 @@ import {
   type InfiniteData,
   type QueryClient,
 } from '@tanstack/react-query';
-import type { Backend, Category, Changes, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
+import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
 import { describeError, UNCATEGORIZED } from '../api/types';
 import { scopeKey } from '../lib/route';
 import { toast } from '../lib/toast';
@@ -21,6 +21,10 @@ const localEdits = new Map<string, number>();
 const LOCAL_EDIT_GRACE = 10_000;
 /** Ask for a little before the last sync to cover clock differences between this device and the server. */
 const SYNC_OVERLAP = 60_000;
+
+/** Feeds subscribed to in this session, so an empty list can say "fetching" instead of "all caught up". */
+const recentlyAdded = new Set<string>();
+export const isRecentlyAdded = (feedId: string) => recentlyAdded.has(feedId);
 
 function noteLocalEdit(ids: Iterable<string>) {
   const now = Date.now();
@@ -120,6 +124,10 @@ export interface Actions {
   setStarred(entry: Entry, starred: boolean): void;
   markScopeRead(scope: Scope, before: number): Promise<void>;
   sync(): Promise<void>;
+  /** Subscribes and reloads the feed list. Resolves to the new feed's id; rejects with the server's reason. */
+  subscribe(url: string, category: CategoryChoice): Promise<string>;
+  /** Removes the feed from the screen at once, then tells the server. */
+  unsubscribe(feed: Feed): void;
 }
 
 /**
@@ -218,7 +226,47 @@ export function useActions(): Actions {
     toast(newCount ? `${newCount} new article${newCount === 1 ? '' : 's'}` : 'Up to date');
   }, [b, qc]);
 
-  return useMemo(() => ({ setRead, setStarred, markScopeRead, sync }), [setRead, setStarred, markScopeRead, sync]);
+  const subscribe = useCallback(
+    async (url: string, category: CategoryChoice) => {
+      const id = await b.subscribe(url, category);
+      recentlyAdded.add(id);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: keys.feeds }),
+        qc.invalidateQueries({ queryKey: keys.categories }),
+        qc.invalidateQueries({ queryKey: ['counts'] }),
+      ]);
+      return id;
+    },
+    [b, qc],
+  );
+
+  const unsubscribe = useCallback(
+    (feed: Feed) => {
+      qc.setQueryData<Feed[]>(keys.feeds, (fs) => fs?.filter((f) => f.id !== feed.id));
+      qc.setQueriesData<Counts | null>({ queryKey: ['counts'] }, (c) => {
+        if (!c) return c;
+        const next = { ...c };
+        delete next[feed.id];
+        return next;
+      });
+      qc.setQueriesData<InfiniteData<Page>>({ queryKey: ['entries'] }, (data) =>
+        data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: p.entries.filter((e) => e.feedId !== feed.id) })) },
+      );
+      b.unsubscribe(feed.id)
+        .then(() => {
+          toast(`Unsubscribed from ${feed.title}`);
+          // A category the server dropped along with its last feed disappears on this reload.
+          void qc.invalidateQueries({ queryKey: keys.categories });
+        })
+        .catch(resync);
+    },
+    [b, qc, resync],
+  );
+
+  return useMemo(
+    () => ({ setRead, setStarred, markScopeRead, sync, subscribe, unsubscribe }),
+    [setRead, setStarred, markScopeRead, sync, subscribe, unsubscribe],
+  );
 }
 
 function parseScopeKey(key: string): Scope {

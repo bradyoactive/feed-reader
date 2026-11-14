@@ -53,6 +53,9 @@ export interface EntryQuery {
   feedIds: Set<string>;
 }
 
+/** An existing category, or a new one to create with this title. */
+export type CategoryChoice = { id: string } | { newTitle: string };
+
 /** What changed on the server since a given time. */
 export interface Changes {
   /** Entries added or modified since then, with their current state. */
@@ -82,6 +85,10 @@ export interface Backend {
   markScopeRead(scope: Scope, before: number): Promise<void>;
   /** New articles and read/star changes since `since` (ms), made here or on another device. */
   getChanges(since: number): Promise<Changes>;
+  /** Subscribes to a feed address in a category. Returns the new feed's id. */
+  subscribe(url: string, category: CategoryChoice): Promise<string>;
+  /** Removes a feed. The server deletes its articles too. */
+  unsubscribe(feedId: string): Promise<void>;
 }
 
 export class AuthError extends Error {

@@ -6,6 +6,7 @@ import type { Entry, Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
 import {
   feedsInScope,
+  isRecentlyAdded,
   queryKeys,
   useActions,
   useCategories,
@@ -215,7 +216,9 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             loadingMore={entriesQuery.isFetchingNextPage}
             onLoadMore={() => void entriesQuery.fetchNextPage()}
             onMarkAll={markAll}
-            emptyMessage={EMPTY[filter]}
+            {...(scope.kind === 'feed' && isRecentlyAdded(scope.id)
+              ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
+              : { emptyMessage: EMPTY[filter] })}
           />
         </div>
       </main>

@@ -1,4 +1,4 @@
-import type { Backend, Category, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -75,15 +75,44 @@ const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms));
 export class DemoBackend implements Backend {
   readonly kind = 'demo' as const;
   private entries = buildEntries();
+  private categories = CATEGORIES.map((c) => ({ ...c }));
+  private feeds = FEEDS.map((f) => ({ ...f }));
+  private added = 0;
+
+  async subscribe(url: string, category: CategoryChoice): Promise<string> {
+    await wait(400);
+    let host: string;
+    try {
+      host = new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      throw new Error('That doesn’t look like a web address.');
+    }
+    let categoryId: string;
+    if ('newTitle' in category) {
+      categoryId = `c${++this.added}`;
+      this.categories.push({ id: categoryId, title: category.newTitle });
+    } else {
+      categoryId = category.id;
+    }
+    const id = `u${++this.added}`;
+    this.feeds.push({ id, title: host, categoryId });
+    return id;
+  }
+
+  async unsubscribe(feedId: string): Promise<void> {
+    await wait(200);
+    this.feeds = this.feeds.filter((f) => f.id !== feedId);
+    this.entries = this.entries.filter((e) => e.feedId !== feedId);
+  }
 
   async getCategories() {
     await wait();
-    return CATEGORIES;
+    return this.categories.map((c) => ({ ...c }));
   }
 
   async getFeeds() {
     await wait();
-    return FEEDS;
+    return this.feeds.map((f) => ({ ...f }));
   }
 
   private countBy(pred: (e: Entry) => boolean) {
@@ -134,7 +163,7 @@ export class DemoBackend implements Backend {
     const feedIds =
       scope.kind === 'all'
         ? null
-        : new Set(FEEDS.filter((f) => (scope.kind === 'feed' ? f.id === scope.id : f.categoryId === scope.id)).map((f) => f.id));
+        : new Set(this.feeds.filter((f) => (scope.kind === 'feed' ? f.id === scope.id : f.categoryId === scope.id)).map((f) => f.id));
     this.entries.forEach((e) => {
       if ((!feedIds || feedIds.has(e.feedId)) && e.published <= before) e.read = true;
     });

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Inbox, Monitor, Moon, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
+import { ChevronRight, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
 import { connectionLabel } from '../api';
-import type { Filter, Scope } from '../api/types';
+import type { Feed, Filter, Scope } from '../api/types';
 import { useActions, useSidebarCounts, useSidebarModel, useUnreadCounts } from '../hooks/data';
 import { feedColor, feedInitial } from '../lib/feedColor';
-import { routeHash, scopeKey } from '../lib/route';
+import { navigate, routeHash, scopeKey } from '../lib/route';
+import { AddFeedDialog } from './AddFeedDialog';
+import { FeedMenu, UnsubscribeConfirm, useFeedPress, type FeedMenuState } from './FeedMenu';
 import { loadPref, loadTheme, savePref, saveTheme, type ConnectionConfig, type Theme } from '../lib/storage';
 
 interface Props {
@@ -69,13 +71,55 @@ function useRelativeTime(t: number) {
   return mins < 1 ? 'synced just now' : mins < 60 ? `synced ${mins} min ago` : `synced ${Math.floor(mins / 60)} h ago`;
 }
 
+interface FeedRowProps {
+  feed: Feed;
+  href: string;
+  selected: boolean;
+  /** Its menu or confirmation is open. */
+  active: boolean;
+  count: string;
+  touch?: boolean;
+  onPick?: () => void;
+  onMenu(state: FeedMenuState): void;
+}
+
+/** A feed in the sidebar. Right-click or long-press opens its menu. */
+function FeedRow({ feed, href, selected, active, count, touch, onPick, onMenu }: FeedRowProps) {
+  const press = useFeedPress(onMenu, feed);
+  return (
+    <a
+      href={href}
+      onClick={() => onPick?.()}
+      {...press}
+      aria-current={selected ? 'page' : undefined}
+      // No iOS link preview or text selection on long-press.
+      className={`flex ${touch ? 'h-11 rounded-full' : 'h-[34px] rounded-lg'} items-center gap-2.5 px-2.5 text-[13.5px] no-underline select-none [-webkit-touch-callout:none] ${
+        selected ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
+      } ${active ? 'ring-[1.5px] ring-accent ring-inset' : ''}`}
+    >
+      <span
+        aria-hidden
+        className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[5px] text-[10px] font-bold text-on-feed"
+        style={{ background: feedColor(feed.id) }}
+      >
+        {feedInitial(feed.title)}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{feed.title}</span>
+      <span className="text-xs text-muted">{count}</span>
+    </a>
+  );
+}
+
 export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const model = useSidebarModel();
   const { counts, ready: countsReady } = useSidebarCounts(filter);
   const unread = useUnreadCounts();
-  const { sync } = useActions();
+  const { sync, unsubscribe } = useActions();
   const { open, toggle, ensure } = useOpenCategories();
   const [refreshing, setRefreshing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [menu, setMenu] = useState<FeedMenuState | null>(null);
+  const [confirming, setConfirming] = useState<Feed | null>(null);
   const synced = useRelativeTime(unread.dataUpdatedAt);
   const account = connectionLabel(connection);
 
@@ -126,7 +170,42 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         >
           <RefreshCw size={18} aria-hidden className={refreshing ? 'animate-spin' : ''} />
         </button>
+        <button
+          aria-label="Add a feed"
+          title="Add a feed"
+          onClick={() => setAdding(true)}
+          className={`flex items-center justify-center rounded-lg ${adding ? 'bg-sel-bg text-sel-fg' : 'text-muted2 hover:bg-seg-bg'}`}
+          style={{ width: touch ? 44 : 36, height: touch ? 44 : 36 }}
+        >
+          <Plus size={20} strokeWidth={2.2} aria-hidden />
+        </button>
       </div>
+      <AddFeedDialog
+        open={adding}
+        onOpenChange={(o) => {
+          setAdding(o);
+        }}
+        scope={scope}
+        filter={filter}
+        onSubscribed={onPick}
+      />
+      {menu && <FeedMenu state={menu} onClose={() => setMenu(null)} onUnsubscribe={(f) => (setMenu(null), setConfirming(f))} />}
+      {confirming && (
+        <UnsubscribeConfirm
+          feed={confirming}
+          onClose={() => setConfirming(null)}
+          onConfirm={() => {
+            const feed = confirming;
+            setConfirming(null);
+            unsubscribe(feed);
+            // If you were reading that feed, move to its category (or everything).
+            if (scope.kind === 'feed' && scope.id === feed.id) {
+              const rest = feed.categoryId ? (model?.feedsByCategory.get(feed.categoryId) ?? []).filter((f) => f.id !== feed.id) : [];
+              navigate(routeHash(rest.length && feed.categoryId ? { kind: 'category', id: feed.categoryId } : { kind: 'all' }, filter));
+            }
+          }}
+        />
+      )}
 
       <nav aria-label="Feeds" className="-mx-3 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3">
         <a
@@ -178,30 +257,19 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
                 </div>
                 {isOpen && feeds.length > 0 && (
                   <div className={`flex flex-col gap-px pt-0.5 pb-1.5 ${touch ? 'pl-[30px]' : 'pl-[22px]'}`}>
-                    {feeds.map((f) => {
-                      const fScope: Scope = { kind: 'feed', id: f.id };
-                      const fsel = isSel(fScope);
-                      return (
-                        <a
-                          key={f.id}
-                          {...link(fScope)}
-                          aria-current={fsel ? 'page' : undefined}
-                          className={`flex ${touch ? 'h-11' : 'h-[34px]'} items-center gap-2.5 ${radius} px-2.5 text-[13.5px] no-underline ${
-                            fsel ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
-                          }`}
-                        >
-                          <span
-                            aria-hidden
-                            className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[5px] text-[10px] font-bold text-on-feed"
-                            style={{ background: feedColor(f.id) }}
-                          >
-                            {feedInitial(f.title)}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">{f.title}</span>
-                          <span className="text-xs text-muted">{blank(counts[f.id])}</span>
-                        </a>
-                      );
-                    })}
+                    {feeds.map((f) => (
+                      <FeedRow
+                        key={f.id}
+                        feed={f}
+                        href={routeHash({ kind: 'feed', id: f.id }, filter)}
+                        selected={isSel({ kind: 'feed', id: f.id })}
+                        active={menu?.feed.id === f.id || confirming?.id === f.id}
+                        count={blank(counts[f.id])}
+                        touch={touch}
+                        onPick={onPick}
+                        onMenu={setMenu}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
