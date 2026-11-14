@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { GroupedVirtuoso } from 'react-virtuoso';
+import { CheckCheck } from 'lucide-react';
 import type { Entry, Feed } from '../api/types';
 import type { Actions } from '../hooks/data';
 import { groupByDay, type DayGroup } from '../lib/dates';
@@ -14,6 +15,8 @@ interface Props {
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore(): void;
+  /** Same as the header's Mark all read: marks the whole view read and moves on. */
+  onMarkAll(): void;
   emptyMessage: string;
 }
 
@@ -42,7 +45,7 @@ function DayHeader({ group, onMarkDay }: { group: DayGroup; onMarkDay(g: DayGrou
   );
 }
 
-export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, emptyMessage }: Props) {
+export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, onMarkAll, emptyMessage }: Props) {
   const groups = useMemo(() => groupByDay(entries), [entries]);
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
   const groupCounts = useMemo(() => groups.map((g) => g.entries.length), [groups]);
@@ -95,16 +98,34 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
           </div>
         );
       }}
-      context={{ loadingMore, hasMore }}
+      context={{ loadingMore, hasMore, onMarkAll }}
       components={{ Footer: ListFooter }}
     />
   );
 }
 
-function ListFooter({ context }: { context?: { loadingMore: boolean; hasMore: boolean } }) {
+interface FooterContext {
+  loadingMore: boolean;
+  hasMore: boolean;
+  onMarkAll(): void;
+}
+
+function ListFooter({ context }: { context?: FooterContext }) {
+  if (!context) return null;
+  const atEnd = !context.loadingMore && !context.hasMore;
   return (
-    <div className={`${column} pt-6 pb-28 text-center text-[13px] text-muted md:pb-16`}>
-      {context?.loadingMore ? 'Loading more…' : context?.hasMore ? '' : 'That’s everything in this view.'}
+    <div className={`${column} flex flex-col items-center gap-3 pt-6 pb-28 text-center text-[13px] text-muted md:pb-16`}>
+      {context.loadingMore ? 'Loading more…' : atEnd ? 'That’s everything in this view.' : ''}
+      {atEnd && (
+        <button
+          onClick={context.onMarkAll}
+          // Desktop only: phones already have the floating mark-all-read button.
+          className="hidden h-10 items-center gap-2 rounded-[10px] bg-btn-bg px-4 text-sm font-semibold text-btn-fg md:flex"
+        >
+          <CheckCheck size={16} aria-hidden />
+          Mark all read
+        </button>
+      )}
     </div>
   );
 }

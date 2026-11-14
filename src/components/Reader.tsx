@@ -214,6 +214,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             hasMore={!!entriesQuery.hasNextPage}
             loadingMore={entriesQuery.isFetchingNextPage}
             onLoadMore={() => void entriesQuery.fetchNextPage()}
+            onMarkAll={markAll}
             emptyMessage={EMPTY[filter]}
           />
         </div>
