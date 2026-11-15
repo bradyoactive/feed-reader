@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { CheckCheck, Menu } from 'lucide-react';
+import { CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Entry, Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
@@ -22,10 +22,10 @@ import { ArticleList } from './ArticleList';
 import { clampSidebar, Resizer, SIDEBAR_DEFAULT } from './Resizer';
 import { Sidebar } from './Sidebar';
 
-const FILTERS: { id: Filter; label: string }[] = [
-  { id: 'unread', label: 'Unread' },
-  { id: 'all', label: 'All' },
-  { id: 'starred', label: 'Starred' },
+const FILTERS: { id: Filter; label: string; Icon: LucideIcon }[] = [
+  { id: 'unread', label: 'Unread', Icon: CircleDot },
+  { id: 'all', label: 'All', Icon: List },
+  { id: 'starred', label: 'Starred', Icon: Star },
 ];
 
 const EMPTY: Record<Filter, string> = {
@@ -58,31 +58,25 @@ function nextScope(scope: Scope, model: SidebarModel, has: (feedId: string) => b
   return null;
 }
 
-function FilterTabs({ filter, scope, floating }: { filter: Filter; scope: Scope; floating?: boolean }) {
+/** Unread / All / Starred. Icons only on phones; icon and label on desktop. */
+function FilterTabs({ filter, scope }: { filter: Filter; scope: Scope }) {
   return (
-    <div
-      role="group"
-      aria-label="Show"
-      className={
-        floating
-          ? 'pointer-events-auto flex gap-0.5 rounded-full border border-border bg-side p-1 shadow-[0_4px_16px_rgb(0_0_0/0.16)]'
-          : 'flex gap-0.5 rounded-[10px] bg-seg-bg p-[3px]'
-      }
-    >
-      {FILTERS.map((f) => {
-        const on = f.id === filter;
+    <div role="group" aria-label="Show" className="flex flex-none gap-0.5 rounded-full bg-seg-bg p-[3px] md:rounded-[10px]">
+      {FILTERS.map(({ id, label, Icon }) => {
+        const on = id === filter;
         return (
           <a
-            key={f.id}
-            href={routeHash(scope, f.id)}
+            key={id}
+            href={routeHash(scope, id)}
             aria-current={on ? 'true' : undefined}
-            className={
-              floating
-                ? `flex h-11 items-center rounded-full px-3.5 text-[13.5px] font-semibold no-underline ${on ? 'bg-sel-bg text-sel-fg' : 'text-muted2'}`
-                : `flex h-[30px] items-center rounded-lg px-3 text-[13px] font-medium no-underline ${on ? 'bg-seg-on text-text shadow-seg' : 'text-muted2'}`
-            }
+            aria-label={label}
+            title={on ? `Showing ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+            className={`flex h-10 w-[42px] items-center justify-center gap-1.5 rounded-full text-[13px] font-medium no-underline md:h-8 md:w-auto md:rounded-lg md:px-[11px] ${
+              on ? 'bg-sel-bg text-sel-fg md:bg-seg-on md:text-text md:shadow-seg' : 'text-muted2'
+            }`}
           >
-            {f.label}
+            <Icon aria-hidden className="size-[19px] md:size-4" fill={on && id === 'starred' ? 'currentColor' : 'none'} />
+            <span className="hidden md:inline">{label}</span>
           </a>
         );
       })}
@@ -176,34 +170,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
         }}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="z-10 flex flex-none flex-wrap items-center gap-x-4 gap-y-3 border-b border-border bg-header-bg px-1.5 pt-2.5 pb-1.5 md:px-6 md:py-3.5">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            aria-label="Open feeds"
-            className="flex h-11 w-11 items-center justify-center rounded-full md:hidden"
-          >
-            <Menu size={22} aria-hidden />
-          </button>
-          <div className="mr-auto flex min-w-0 flex-1 flex-col gap-0.5 md:flex-none">
-            <h1 className="m-0 truncate text-[19px] font-bold tracking-[-0.015em] md:text-[22px]">{heading}</h1>
-            <span className="text-[12.5px] text-muted md:text-[13px]">
-              {parent}
-              {unreadInScope} unread
-            </span>
-          </div>
-          <div className="hidden md:block">
-            <FilterTabs filter={filter} scope={scope} />
-          </div>
-          <button
-            onClick={markAll}
-            className="hidden h-9 items-center gap-2 rounded-[10px] bg-btn-bg px-3.5 text-[13px] font-semibold text-btn-fg md:flex"
-          >
-            <CheckCheck size={16} aria-hidden />
-            Mark all read
-          </button>
-        </header>
-
+      <main className="flex min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] md:pt-0">
         <div className="min-h-0 flex-1">
           <ArticleList
             key={viewKey}
@@ -215,26 +182,50 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             hasMore={!!entriesQuery.hasNextPage}
             loadingMore={entriesQuery.isFetchingNextPage}
             onLoadMore={() => void entriesQuery.fetchNextPage()}
-            onMarkAll={markAll}
             {...(scope.kind === 'feed' && isRecentlyAdded(scope.id)
               ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
               : { emptyMessage: EMPTY[filter] })}
           />
         </div>
-      </main>
 
-      {/* Phone: floating filter pill (centered) and mark-all-read button (right). */}
-      <div className="pointer-events-none fixed inset-x-4 bottom-[max(20px,env(safe-area-inset-bottom))] z-20 flex h-14 items-center justify-center md:hidden">
-        <FilterTabs filter={filter} scope={scope} floating />
-        <button
-          onClick={markAll}
-          aria-label="Mark all read"
-          title="Mark all read"
-          className="pointer-events-auto absolute top-0 right-0 flex h-14 w-14 items-center justify-center rounded-[18px] bg-accent text-on-accent shadow-[0_4px_16px_rgb(0_0_0/0.22)]"
-        >
-          <CheckCheck size={24} aria-hidden />
-        </button>
-      </div>
+        {/* The app bar lives at the bottom, on phones and desktop alike. */}
+        <nav aria-label="View" className="z-10 flex-none border-t border-border bg-side md:bg-header-bg md:backdrop-blur">
+          <div className="mx-auto flex w-full max-w-[1120px] items-center gap-1.5 pt-2 pr-2.5 pb-[max(8px,env(safe-area-inset-bottom))] pl-1 md:gap-4 md:px-6 md:py-2.5">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open feeds"
+              className="flex h-11 w-11 flex-none items-center justify-center rounded-full md:hidden"
+            >
+              <Menu size={22} aria-hidden />
+            </button>
+            {/* Phone: the name also opens the drawer. */}
+            <button onClick={() => setDrawerOpen(true)} className="flex h-11 min-w-0 flex-1 flex-col justify-center text-left md:hidden">
+              <span className="max-w-full truncate text-base font-bold tracking-[-0.01em]">{heading}</span>
+              <span className="max-w-full truncate text-xs text-muted">
+                {parent}
+                {unreadInScope} unread
+              </span>
+            </button>
+            <div className="hidden min-w-0 flex-1 items-baseline gap-2.5 md:flex">
+              <h1 className="m-0 min-w-0 truncate text-[17px] font-bold tracking-[-0.01em]">{heading}</h1>
+              <span className="flex-none text-[13px] text-muted">
+                {parent}
+                {unreadInScope} unread
+              </span>
+            </div>
+            <FilterTabs filter={filter} scope={scope} />
+            <button
+              onClick={markAll}
+              aria-label="Mark all read"
+              title="Mark all read"
+              className="flex h-11 w-11 flex-none items-center justify-center gap-2 rounded-[14px] bg-accent text-[13px] font-semibold text-on-accent md:h-[38px] md:w-auto md:rounded-[10px] md:px-3.5"
+            >
+              <CheckCheck aria-hidden className="size-[22px] md:size-4" />
+              <span className="hidden md:inline">Mark all read</span>
+            </button>
+          </div>
+        </nav>
+      </main>
 
       <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
         <Dialog.Portal>
