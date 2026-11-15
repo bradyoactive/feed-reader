@@ -6,8 +6,12 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 // `base: './'` keeps asset URLs relative, so the built `dist/` folder works
 // from any path on any static host (a sub-folder, GitHub Pages, a NAS share…).
+// Identifies this build; the service worker is registered as sw.js?v=<id> (see main.tsx).
+const buildId = (process.env.GITHUB_SHA ?? Date.now().toString(36)).slice(0, 12);
+
 export default defineConfig({
   base: './',
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   plugins: [
     react(),
     tailwindcss(),
@@ -15,7 +19,9 @@ export default defineConfig({
     // instantly and offline. Requests to your RSS server are cross-origin and always go to the network.
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'script-defer',
+      // Registered in main.tsx with the build id in the URL: GitHub Pages' CDN can keep serving an old
+      // sw.js for hours, and a new URL per deploy means it can't hold an update back.
+      injectRegister: false,
       includeAssets: ['favicon.ico', 'logo.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
         id: './',
@@ -35,9 +41,22 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
-        navigateFallback: 'index.html',
+        // The page itself isn't precached: it's loaded network-first below, so an online visit always
+        // gets the latest deploy and the cached copy is only used offline. Scripts, styles and icons
+        // are precached (their names change with every build).
+        globPatterns: ['**/*.{js,css,svg,png,ico}'],
+        navigateFallback: null,
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: { cacheName: 'skim-pages', networkTimeoutSeconds: 4 },
+          },
+        ],
         cleanupOutdatedCaches: true,
+        // A new version takes over as soon as it's installed; with network-first pages nothing is left stale.
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],
