@@ -49,7 +49,7 @@ describe('greader', () => {
       json({
         subscriptions: [
           { id: 'feed/1', title: 'B', categories: [{ id: 'user/-/label/Tech', label: 'Tech' }] },
-          { id: 'feed/2', title: 'A', categories: [] },
+          { id: 'feed/2', title: 'A', categories: [], iconUrl: 'f.php?h=abc' },
         ],
       }),
     );
@@ -60,6 +60,9 @@ describe('greader', () => {
       { id: UNCATEGORIZED, title: 'Uncategorized' },
     ]);
     expect(feeds.find((f) => f.id === 'feed/2')?.categoryId).toBe(UNCATEGORIZED);
+    // FreshRSS's public icon URL, resolved against the server.
+    expect(feeds.find((f) => f.id === 'feed/2')?.iconUrl).toBe('https://rss.test/api/f.php?h=abc');
+    expect(feeds.find((f) => f.id === 'feed/1')?.iconUrl).toBeUndefined();
   });
 
   it('asks for unread items in a folder with xt and continuation', async () => {

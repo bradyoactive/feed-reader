@@ -13,6 +13,10 @@ export interface Feed {
   /** null when the server has the feed outside any category/folder. */
   categoryId: string | null;
   siteUrl?: string;
+  /** A favicon the browser can load directly (FreshRSS serves these publicly). */
+  iconUrl?: string;
+  /** An icon that has to be fetched through the API with your login (Miniflux); see Backend.getFeedIcon. */
+  iconId?: string;
 }
 
 export interface Entry {
@@ -89,6 +93,8 @@ export interface Backend {
   subscribe(url: string, category: CategoryChoice): Promise<string>;
   /** Removes a feed. The server deletes its articles too. */
   unsubscribe(feedId: string): Promise<void>;
+  /** The icon for a feed's `iconId`, as a data: URL, or null if the server has none. */
+  getFeedIcon?(iconId: string, feedId: string): Promise<string | null>;
 }
 
 export class AuthError extends Error {

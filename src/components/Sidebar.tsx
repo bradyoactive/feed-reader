@@ -3,7 +3,7 @@ import { ChevronRight, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizo
 import { connectionLabel } from '../api';
 import type { Feed, Filter, Scope } from '../api/types';
 import { useActions, useSidebarCounts, useSidebarModel, useUnreadCounts } from '../hooks/data';
-import { feedColor, feedInitial } from '../lib/feedColor';
+import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
 import { FeedMenu, UnsubscribeConfirm, useFeedPress, type FeedMenuState } from './FeedMenu';
@@ -97,13 +97,7 @@ function FeedRow({ feed, href, selected, active, count, touch, onPick, onMenu }:
         selected ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
       } ${active ? 'ring-[1.5px] ring-accent ring-inset' : ''}`}
     >
-      <span
-        aria-hidden
-        className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-[5px] text-[10px] font-bold text-on-feed"
-        style={{ background: feedColor(feed.id) }}
-      >
-        {feedInitial(feed.title)}
-      </span>
+      <FeedIcon feed={feed} feedId={feed.id} className="h-[18px] w-[18px] rounded-[5px]" letterClass="text-[10px]" />
       <span className="min-w-0 flex-1 truncate">{feed.title}</span>
       <span className="text-xs text-muted">{count}</span>
     </a>

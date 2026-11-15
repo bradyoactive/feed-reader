@@ -126,6 +126,25 @@ describe('miniflux', () => {
     await expect(new MinifluxBackend(config).subscribe('https://x.test/feed', { id: '1' })).rejects.toThrow('This feed already exists.');
   });
 
+  it('reads icon ids from feeds and fetches icons as data URLs, cached', async () => {
+    const f = mockFetch((url) => {
+      if (url.pathname === '/v1/feeds') return [{ id: 3, title: 'A', site_url: 'https://a.test', icon: { icon_id: 501 } }, { id: 4, title: 'B', site_url: 'https://b.test', icon: null }];
+      return { id: 501, data: 'image/png;base64,AAAA', mime_type: 'image/png' };
+    });
+    const b = new MinifluxBackend(config);
+    const feeds = await b.getFeeds();
+    expect(feeds.map((x) => x.iconId)).toEqual(['501', undefined]);
+    expect(await b.getFeedIcon('501', '3')).toBe('data:image/png;base64,AAAA');
+    expect(String(f.mock.calls[1][0])).toBe('https://rss.test/v1/icons/501');
+    expect(await b.getFeedIcon('501', '3')).toBe('data:image/png;base64,AAAA');
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the per-feed icon endpoint on older servers', async () => {
+    mockFetch((url) => (url.pathname.startsWith('/v1/icons/') ? new Response('Not found', { status: 404 }) : { data: 'image/x-icon;base64,BBBB' }));
+    expect(await new MinifluxBackend(config).getFeedIcon('777', '9')).toBe('data:image/x-icon;base64,BBBB');
+  });
+
   it('unsubscribes with DELETE', async () => {
     const f = mockFetch(() => undefined);
     await new MinifluxBackend(config).unsubscribe('42');

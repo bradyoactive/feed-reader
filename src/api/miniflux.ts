@@ -17,7 +17,7 @@ export interface MinifluxConfig {
 }
 
 interface MfCategory { id: number; title: string }
-interface MfFeed { id: number; title: string; site_url: string; category?: MfCategory | null }
+interface MfFeed { id: number; title: string; site_url: string; category?: MfCategory | null; icon?: { icon_id: number } | null }
 interface MfEnclosure { url: string; mime_type: string }
 interface MfEntry {
   id: number;
@@ -93,7 +93,25 @@ export class MinifluxBackend implements Backend {
       title: f.title,
       categoryId: f.category ? String(f.category.id) : null,
       siteUrl: f.site_url,
+      iconId: f.icon?.icon_id ? String(f.icon.icon_id) : undefined,
     }));
+  }
+
+  async getFeedIcon(iconId: string, feedId: string): Promise<string | null> {
+    const key = `skim.icon.${this.config.url}|${iconId}`;
+    const cached = readIconCache(key);
+    if (cached !== undefined) return cached;
+    let icon: { data?: string } | null;
+    try {
+      icon = await this.call<{ data?: string }>(`/v1/icons/${iconId}`);
+    } catch {
+      // Miniflux before 2.0.49 only has the per-feed endpoint.
+      icon = await this.call<{ data?: string }>(`/v1/feeds/${feedId}/icon`).catch(() => null);
+    }
+    // `data` is "image/png;base64,…", a data: URL without its scheme.
+    const url = icon?.data ? (icon.data.startsWith('data:') ? icon.data : `data:${icon.data}`) : null;
+    writeIconCache(key, url);
+    return url;
   }
 
   async getUnreadCounts(): Promise<Record<string, number>> {
@@ -238,5 +256,24 @@ export class MinifluxBackend implements Backend {
           ? `/v1/categories/${scope.id}/mark-all-as-read`
           : `/v1/users/${this.config.userId}/mark-all-as-read`;
     await this.call(path, { method: 'PUT' });
+  }
+}
+
+/** Icons are kept in localStorage so they aren't downloaded again on every launch. Large ones are skipped. */
+function readIconCache(key: string): string | null | undefined {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? undefined : v || null;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeIconCache(key: string, url: string | null) {
+  if (url && url.length > 24_000) return;
+  try {
+    localStorage.setItem(key, url ?? '');
+  } catch {
+    /* storage full or blocked: just fetch next time */
   }
 }

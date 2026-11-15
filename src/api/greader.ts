@@ -25,6 +25,7 @@ interface GrSubscription {
   id: string;
   title: string;
   htmlUrl?: string;
+  iconUrl?: string;
   categories?: { id: string; label?: string }[];
 }
 interface GrItem {
@@ -200,6 +201,7 @@ export class GReaderBackend implements Backend {
       title: s.title,
       categoryId: s.categories?.find((c) => c.id.includes('/label/'))?.id ?? UNCATEGORIZED,
       siteUrl: s.htmlUrl,
+      iconUrl: safeUrl(s.iconUrl, this.config.url),
     }));
   }
 

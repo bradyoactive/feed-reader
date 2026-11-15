@@ -9,6 +9,15 @@ const CATEGORIES: Category[] = [
   { id: 'cooking', title: 'Cooking' },
 ];
 
+/** A few demo feeds have favicons (simple drawn ones); the rest show the letter fallback. */
+const svgIcon = (body: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">${body}</svg>`)}`;
+const ICONS: Record<string, string> = {
+  kw: svgIcon('<rect width="32" height="32" rx="6" fill="#1d1d1f"/><path d="M8 22l6-12 4 8 3-5 3 9" fill="none" stroke="#5ee38a" stroke-width="3" stroke-linejoin="round"/>'),
+  tfj: svgIcon('<circle cx="16" cy="16" r="16" fill="#f4d35e"/><text x="16" y="23" font-family="Georgia,serif" font-size="20" font-weight="700" text-anchor="middle" fill="#3d2c00">Aa</text>'),
+  mw: svgIcon('<rect width="32" height="32" rx="7" fill="#e85d3a"/><circle cx="16" cy="18" r="7" fill="#ffd27a"/><rect x="4" y="20" width="24" height="8" fill="#e85d3a"/>'),
+  hb: svgIcon('<rect width="32" height="32" rx="16" fill="#c98b4a"/><ellipse cx="16" cy="17" rx="10" ry="7" fill="#f3d9a4"/><circle cx="12" cy="16" r="1.5" fill="#6b8f3a"/><circle cx="19" cy="18" r="1.5" fill="#6b8f3a"/>'),
+};
+
 const FEEDS: Feed[] = [
   { id: 'kw', title: 'Kernel Weekly', categoryId: 'tech' },
   { id: 'll', title: 'Low Level Notes', categoryId: 'tech' },
@@ -21,6 +30,8 @@ const FEEDS: Feed[] = [
   { id: 'hb', title: 'Half-Baked', categoryId: 'cooking' },
   { id: 'fl', title: 'Fermentation Log', categoryId: 'cooking' },
 ];
+
+for (const f of FEEDS) f.iconUrl = ICONS[f.id];
 
 const SAMPLES: [string, string, string][] = [
   ['kw', 'Rewriting the scheduler: what changed this cycle, and why interactive latency finally feels different on desktop machines', 'The new scheduling class landed after three years of review. We walk through the design trade-offs, the benchmarks maintainers actually trusted, and the handful of workloads that still regress — plus how to tell whether your own machine is affected and which knobs are worth touching before you file a bug.'],

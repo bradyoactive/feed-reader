@@ -2,7 +2,8 @@ import { memo, useState } from 'react';
 import { ArrowDownToLine, ArrowUpToLine, CircleCheck, Star } from 'lucide-react';
 import type { Entry, Feed } from '../api/types';
 import { formatTime } from '../lib/dates';
-import { feedColor, feedInitial } from '../lib/feedColor';
+import { feedColor } from '../lib/feedColor';
+import { FeedIcon } from './FeedIcon';
 
 interface Props {
   entry: Entry;
@@ -41,13 +42,7 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
             className="h-2 w-2 flex-none rounded-full md:hidden"
             style={{ background: entry.read ? 'transparent' : 'var(--accent)' }}
           />
-          <span
-            aria-hidden
-            className="flex h-4 w-4 items-center justify-center rounded text-[9px] font-bold text-on-feed"
-            style={{ background: color }}
-          >
-            {feedInitial(title)}
-          </span>
+          <FeedIcon feed={feed} feedId={entry.feedId} className="h-4 w-4 rounded" letterClass="text-[9px]" />
           <span className="font-semibold" style={{ color }}>
             {title}
           </span>
