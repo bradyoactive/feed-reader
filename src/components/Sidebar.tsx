@@ -52,7 +52,7 @@ function ThemeButton({ size }: { size: number }) {
         saveTheme(next[theme]);
         setTheme(next[theme]);
       }}
-      className="flex items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"
+      className="flex flex-none items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"
       style={{ width: size, height: size }}
     >
       <Icon size={18} aria-hidden />
@@ -67,8 +67,12 @@ function useRelativeTime(t: number) {
     return () => clearInterval(id);
   }, []);
   if (!t) return 'syncing…';
+  // Short, so it fits beside the sync button at any sidebar width.
   const mins = Math.floor((Date.now() - t) / 60_000);
-  return mins < 1 ? 'synced just now' : mins < 60 ? `synced ${mins} min ago` : `synced ${Math.floor(mins / 60)} h ago`;
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
 interface FeedRowProps {
@@ -151,9 +155,7 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[14px] font-semibold">{account.title}</span>
-          <span className="truncate text-xs text-muted">
-            {account.host} · {synced}
-          </span>
+          <span className="truncate text-xs text-muted">{account.host}</span>
         </div>
         <a
           href="#/settings"
@@ -264,29 +266,33 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
       </nav>
 
       {/* Actions, in a bar that lines up with the article list's bottom bar on desktop. */}
-      <div className="-mx-3 flex flex-none items-center gap-1 border-t border-border px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] md:py-2.5">
+      <div className="@container -mx-3 flex flex-none items-center gap-1 border-t border-border px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] md:py-2.5">
         <button
           onClick={() => setAdding(true)}
-          className={`flex ${touch ? 'h-11' : 'h-[38px]'} items-center gap-2 rounded-lg px-2.5 text-[13.5px] font-semibold ${
+          aria-label="Add feed"
+          title="Add a feed"
+          className={`flex ${touch ? 'h-11 min-w-11' : 'h-[38px] min-w-[38px]'} flex-none items-center justify-center gap-2 rounded-lg px-2.5 text-[13.5px] font-semibold ${
             adding ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
           }`}
         >
           <Plus size={18} strokeWidth={2.2} aria-hidden />
-          Add feed
+          {/* Dropped in a very narrow sidebar, so the sync time always fits. */}
+          <span className={`hidden ${touch ? '@[16.5rem]:inline' : '@[15.5rem]:inline'}`}>Add feed</span>
         </button>
+        {/* Sync, with when it last happened. */}
         <button
-          aria-label="Sync with server"
-          title="Sync with server"
+          aria-label={refreshing ? 'Syncing' : `Sync with server, last synced ${synced}`}
+          title={`Sync with server (last synced ${synced})`}
           disabled={refreshing}
           onClick={async () => {
             setRefreshing(true);
             await sync();
             setRefreshing(false);
           }}
-          className="ml-auto flex items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"
-          style={{ width: touch ? 44 : 38, height: touch ? 44 : 38 }}
+          className={`ml-auto flex ${touch ? 'h-11' : 'h-[38px]'} flex-none items-center gap-1.5 rounded-lg px-2.5 text-xs whitespace-nowrap text-muted2 hover:bg-seg-bg`}
         >
           <RefreshCw size={18} aria-hidden className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'syncing…' : synced}
         </button>
         <ThemeButton size={touch ? 44 : 38} />
       </div>
