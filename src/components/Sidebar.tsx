@@ -143,36 +143,27 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const link = (s: Scope) => ({ href: routeHash(s, filter), onClick: () => onPick?.() });
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 px-3 pt-[18px] pb-3">
-      <div className="flex items-center gap-2.5 px-2">
-        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-accent text-on-accent">
+    <div className="flex h-full min-h-0 flex-col gap-4 px-3 pt-[max(18px,env(safe-area-inset-top))] md:pt-[18px]">
+      {/* Which server you're reading from, and a way to change it. */}
+      <div className="flex items-center gap-2.5 pl-2">
+        <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg bg-accent text-on-accent">
           <Rss size={18} strokeWidth={2.4} aria-hidden />
         </span>
-        <span className="mr-auto text-[17px] font-bold tracking-tight">Skim</span>
-        <ThemeButton size={touch ? 44 : 36} />
-        <button
-          aria-label="Sync with server"
-          title="Sync with server"
-          disabled={refreshing}
-          onClick={async () => {
-            setRefreshing(true);
-            await sync();
-            setRefreshing(false);
-          }}
-          className="flex items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"
-          style={{ width: touch ? 44 : 36, height: touch ? 44 : 36 }}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-[14px] font-semibold">{account.title}</span>
+          <span className="truncate text-xs text-muted">
+            {account.host} · {synced}
+          </span>
+        </div>
+        <a
+          href="#/settings"
+          onClick={() => onPick?.()}
+          aria-label="Connection settings"
+          title="Connection settings"
+          className={`flex ${touch ? 'h-11 w-11' : 'h-9 w-9'} flex-none items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg`}
         >
-          <RefreshCw size={18} aria-hidden className={refreshing ? 'animate-spin' : ''} />
-        </button>
-        <button
-          aria-label="Add a feed"
-          title="Add a feed"
-          onClick={() => setAdding(true)}
-          className={`flex items-center justify-center rounded-lg ${adding ? 'bg-sel-bg text-sel-fg' : 'text-muted2 hover:bg-seg-bg'}`}
-          style={{ width: touch ? 44 : 36, height: touch ? 44 : 36 }}
-        >
-          <Plus size={20} strokeWidth={2.2} aria-hidden />
-        </button>
+          <SlidersHorizontal size={18} aria-hidden />
+        </a>
       </div>
       <AddFeedDialog
         open={adding}
@@ -272,22 +263,32 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         </div>
       </nav>
 
-      <div className="flex flex-none items-center gap-2.5 rounded-[10px] border border-border bg-bg py-2.5 pr-1.5 pl-3">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-[13px] font-semibold">{account.title}</span>
-          <span className="truncate text-xs text-muted">
-            {account.host} · {synced}
-          </span>
-        </div>
-        <a
-          href="#/settings"
-          onClick={() => onPick?.()}
-          aria-label="Connection settings"
-          title="Connection settings"
-          className={`flex ${touch ? 'h-11 w-11' : 'h-9 w-9'} items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg`}
+      {/* Actions, in a bar that lines up with the article list's bottom bar on desktop. */}
+      <div className="-mx-3 flex flex-none items-center gap-1 border-t border-border px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] md:py-2.5">
+        <button
+          onClick={() => setAdding(true)}
+          className={`flex ${touch ? 'h-11' : 'h-[38px]'} items-center gap-2 rounded-lg px-2.5 text-[13.5px] font-semibold ${
+            adding ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
+          }`}
         >
-          <SlidersHorizontal size={18} aria-hidden />
-        </a>
+          <Plus size={18} strokeWidth={2.2} aria-hidden />
+          Add feed
+        </button>
+        <button
+          aria-label="Sync with server"
+          title="Sync with server"
+          disabled={refreshing}
+          onClick={async () => {
+            setRefreshing(true);
+            await sync();
+            setRefreshing(false);
+          }}
+          className="ml-auto flex items-center justify-center rounded-lg text-muted2 hover:bg-seg-bg"
+          style={{ width: touch ? 44 : 38, height: touch ? 44 : 38 }}
+        >
+          <RefreshCw size={18} aria-hidden className={refreshing ? 'animate-spin' : ''} />
+        </button>
+        <ThemeButton size={touch ? 44 : 38} />
       </div>
     </div>
   );

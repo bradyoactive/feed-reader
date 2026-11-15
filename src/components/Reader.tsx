@@ -121,7 +121,7 @@ function FilterTabs({ filter, scope }: { filter: Filter; scope: Scope }) {
 }
 
 export function Reader({ connection }: { connection: ConnectionConfig }) {
-  const { scope, filter, ready } = useRoute();
+  const { page, scope, filter, ready } = useRoute();
   const viewKey = `${scopeKey(scope)}|${filter}`;
   const stableScope = useMemo(() => scope, [viewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -140,10 +140,11 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   // Once names are known: send a link to something that no longer exists to All, and rewrite
   // older id-style links (or a renamed feed's old name) to the current name, without a new history entry.
   useEffect(() => {
-    if (!ready) return;
+    // Leaving for the settings page: this view is about to close, so don't touch the URL.
+    if (!ready || page !== 'reader') return;
     const canonical = scopeExists(scope) ? routeHash(scope, filter) : routeHash({ kind: 'all' }, filter);
     if (decodeURIComponent(location.hash) !== decodeURIComponent(canonical)) location.replace(canonical);
-  }, [ready, scope, filter]);
+  }, [page, ready, scope, filter]);
 
   const [sideW, setSideW] = useState(() => clampSidebar(loadPref('sidebarWidth', SIDEBAR_DEFAULT)));
   const [drawerOpen, setDrawerOpen] = useState(false);
