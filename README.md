@@ -41,6 +41,14 @@ header Access-Control-Allow-Methods "GET, POST, PUT, OPTIONS"
   `https://your-host/api/greader.php` as the server URL. Skim keeps only the auth token the server returns, not the
   password.
 
+### Install as an app
+
+Skim is a PWA. On a phone, use Share → **Add to Home Screen** (iOS) or **Install app** (Android); on desktop, use the install icon in Chrome or Edge's address bar. It opens full screen, and a service worker caches Skim's own files so it starts instantly, even offline. Your RSS server is never cached: articles always come from it. An app installed from Safari keeps its own storage, so you connect once more inside it.
+
+New deploys are picked up automatically the next time the app is opened.
+
+To redraw the icons after changing `public/logo.svg`, run `npm run icons`.
+
 ## How it works
 
 | Piece | Where |

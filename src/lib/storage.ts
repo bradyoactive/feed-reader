@@ -72,4 +72,16 @@ export function saveTheme(theme: Theme) {
   write(local, 'skim.theme', theme === 'system' ? null : theme);
   if (theme === 'system') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
+  applyThemeColor(theme);
+}
+
+/** Page background per theme; the browser and installed app tint their toolbar and status bar with it. */
+const THEME_COLOR = { light: '#FBFAF8', dark: '#151618' };
+
+/** Keeps the theme-color tags (one per system scheme, in index.html) in step with a chosen theme. */
+function applyThemeColor(theme: Theme) {
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
+    const scheme = m.media.includes('dark') ? 'dark' : 'light';
+    m.content = THEME_COLOR[theme === 'system' ? scheme : theme];
+  });
 }

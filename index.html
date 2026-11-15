@@ -6,12 +6,26 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="referrer" content="no-referrer" />
     <title>Skim</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232F5BD3'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6a12 12 0 0 1 12 12'/%3E%3Cpath d='M6 11a7 7 0 0 1 7 7'/%3E%3C/g%3E%3Ccircle cx='7' cy='17' r='1.6' fill='white'/%3E%3C/svg%3E" />
+    <meta name="theme-color" content="#FBFAF8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151618" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="A fast reader for your Miniflux or Google Reader–compatible RSS server." />
+    <!-- Installed on a home screen: full screen, named Skim, with the system status bar. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Skim" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="icon" href="./favicon.ico" sizes="48x48" />
+    <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon-180x180.png" />
     <script>
       // Apply the saved theme before first paint to avoid a light flash in dark mode.
       try {
         var t = localStorage.getItem('skim.theme');
-        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+        if (t === 'light' || t === 'dark') {
+          document.documentElement.dataset.theme = t;
+          document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+            m.content = t === 'dark' ? '#151618' : '#FBFAF8';
+          });
+        }
       } catch (e) {}
     </script>
   </head>
