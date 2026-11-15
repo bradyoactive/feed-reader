@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { GroupedVirtuoso } from 'react-virtuoso';
 import { CircleCheck, CircleDot } from 'lucide-react';
-import type { Entry, Feed } from '../api/types';
+import type { Entry, Feed, Filter } from '../api/types';
 import type { Actions } from '../hooks/data';
 import { groupByDay, type DayGroup } from '../lib/dates';
 import { ArticleItem } from './ArticleItem';
@@ -17,6 +17,7 @@ interface Props {
   onLoadMore(): void;
   emptyTitle?: string;
   emptyMessage: string;
+  filter: Filter;
 }
 
 const column = 'mx-auto w-full max-w-[1120px] px-3 md:px-6';
@@ -44,7 +45,7 @@ function DayHeader({ group, onMarkDay }: { group: DayGroup; onMarkDay(g: DayGrou
   );
 }
 
-export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
+export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, filter, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
   const groups = useMemo(() => groupByDay(entries), [entries]);
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
   const groupCounts = useMemo(() => groups.map((g) => g.entries.length), [groups]);
@@ -98,6 +99,7 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
               <ArticleItem
                 entry={entry}
                 feed={feedsById.get(entry.feedId)}
+                filter={filter}
                 onOpen={onOpen}
                 onToggleRead={onToggleRead}
                 onToggleStar={onToggleStar}

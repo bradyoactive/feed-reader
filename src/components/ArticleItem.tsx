@@ -1,13 +1,16 @@
 import { memo, useState } from 'react';
 import { ArrowDownToLine, ArrowUpToLine, CircleCheck, Star } from 'lucide-react';
-import type { Entry, Feed } from '../api/types';
+import type { Entry, Feed, Filter } from '../api/types';
 import { formatTime } from '../lib/dates';
 import { feedColor } from '../lib/feedColor';
+import { routeHash } from '../lib/route';
 import { FeedIcon } from './FeedIcon';
 
 interface Props {
   entry: Entry;
   feed: Feed | undefined;
+  /** Current filter, kept when following the feed name to that feed. */
+  filter: Filter;
   onOpen(entry: Entry): void;
   onToggleRead(entry: Entry): void;
   onToggleStar(entry: Entry): void;
@@ -18,7 +21,7 @@ interface Props {
 const actionBtn =
   'inline-flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-full text-[13px] font-medium md:h-[34px] md:min-w-0 md:justify-start md:rounded-lg md:px-2.5 hover:bg-seg-bg';
 
-export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onToggleRead, onToggleStar, onReadAbove, onReadBelow }: Props) {
+export const ArticleItem = memo(function ArticleItem({ entry, feed, filter, onOpen, onToggleRead, onToggleStar, onReadAbove, onReadBelow }: Props) {
   const [imageFailed, setImageFailed] = useState(false);
   const color = feedColor(entry.feedId);
   const title = feed?.title ?? 'Unknown feed';
@@ -29,7 +32,7 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
   const open = () => onOpen(entry);
 
   return (
-    <article data-swipe-front className="flex gap-3 border-b bg-bg border-rule pt-3.5 pb-0.5 md:pt-4 md:pb-2.5">
+    <article data-swipe-front className="relative flex gap-3 border-b border-rule bg-bg pt-3.5 pb-0.5 md:pt-4 md:pb-2.5">
       <span
         aria-hidden
         className="mt-[7px] hidden h-2 w-2 flex-none rounded-full md:mt-[31px] md:block"
@@ -42,10 +45,15 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
             className="h-2 w-2 flex-none rounded-full md:hidden"
             style={{ background: entry.read ? 'transparent' : 'var(--accent)' }}
           />
-          <FeedIcon feed={feed} feedId={entry.feedId} className="h-4 w-4 rounded" letterClass="text-[9px]" />
-          <span className="font-semibold" style={{ color }}>
+          {/* Above the row-wide article link, so it goes to the feed instead. */}
+          <a
+            href={routeHash({ kind: 'feed', id: entry.feedId }, filter)}
+            className="relative z-[1] flex items-center gap-2 font-semibold no-underline hover:underline"
+            style={{ color }}
+          >
+            <FeedIcon feed={feed} feedId={entry.feedId} className="h-4 w-4 rounded" letterClass="text-[9px]" />
             {title}
-          </span>
+          </a>
           <span aria-hidden>·</span>
           <time dateTime={new Date(entry.published).toISOString()}>{formatTime(entry.published)}</time>
           {!entry.read && <span className="sr-only">Unread</span>}
@@ -60,24 +68,28 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
                 rel="noopener noreferrer"
                 onClick={open}
                 onAuxClick={(e) => e.button === 1 && open()}
-                className={`no-underline hover:underline ${entry.read ? 'text-read' : 'text-text'}`}
+                // Its ::after covers the whole row, so clicking anywhere on the article opens it
+                // (and middle-click / ⌘-click still work, since it's a real link).
+                className={`no-underline after:absolute after:inset-0 after:content-[''] hover:underline ${entry.read ? 'text-read' : 'text-text'}`}
               >
                 {entry.title}
               </a>
             </h3>
             {entry.summary && (
-              <p className={`line-clamp-3 m-0 text-sm leading-[1.55] md:text-[14.5px] md:leading-[1.6] ${entry.read ? 'text-read' : 'text-desc'}`}>
+              <p
+                // Above the row-wide link so its text can be selected; a plain click still opens the article.
+                onClick={() => {
+                  if (window.getSelection()?.toString() || !entry.url) return;
+                  window.open(entry.url, '_blank', 'noopener,noreferrer');
+                  open();
+                }}
+                className={`relative z-[1] cursor-pointer line-clamp-3 m-0 text-sm leading-[1.55] md:text-[14.5px] md:leading-[1.6] ${entry.read ? 'text-read' : 'text-desc'}`}>
                 {entry.summary}
               </p>
             )}
           </div>
           {showImage && (
-            <a
-              href={entry.url || undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={open}
-              tabIndex={-1}
+            <div
               aria-hidden
               className="mt-0.5 block h-[84px] w-[84px] flex-none overflow-hidden rounded-[10px] bg-rule md:h-[118px] md:w-[176px]"
               style={{ opacity: entry.read ? 0.6 : 1 }}
@@ -91,11 +103,11 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
                 onError={() => setImageFailed(true)}
                 className="h-full w-full object-cover"
               />
-            </a>
+            </div>
           )}
         </div>
 
-        <div className="-mx-[11px] mt-0.5 flex flex-wrap items-center gap-0.5 md:mx-0 md:-ml-2.5 md:mt-1">
+        <div className="relative z-[1] -mx-[11px] mt-0.5 flex flex-wrap items-center gap-0.5 self-start md:mx-0 md:-ml-2.5 md:mt-1">
           <button
             onClick={() => onToggleRead(entry)}
             aria-label={readLabel}

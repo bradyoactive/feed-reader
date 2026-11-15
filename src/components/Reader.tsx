@@ -316,6 +316,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             key={viewKey}
             entries={entries}
             feedsById={feedsById}
+            filter={filter}
             actions={actions}
             loading={entriesQuery.isPending}
             error={error ? describeError(error) : null}
@@ -347,8 +348,9 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
               </span>
             </button>
             <div className="hidden min-w-0 flex-1 items-baseline gap-2.5 md:flex">
-              <h1 className="m-0 min-w-0 truncate text-[17px] font-bold tracking-[-0.01em]">{heading}</h1>
-              <span className="flex-none text-[13px] text-muted">
+              {/* The name keeps its width; the count beside it gives way first when space is short. */}
+              <h1 className="m-0 max-w-full flex-none truncate text-[17px] font-bold tracking-[-0.01em]">{heading}</h1>
+              <span className="min-w-0 truncate text-[13px] text-muted">
                 {parent}
                 {unreadInScope} unread
               </span>
