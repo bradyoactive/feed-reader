@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -16,6 +16,7 @@ import {
   useUnreadCounts,
   type SidebarModel,
 } from '../hooks/data';
+import { animateTo, useSwipe, type SwipeDirection, type SwipeSession } from '../hooks/swipe';
 import { navigate, routeHash, scopeKey, useRoute } from '../lib/route';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
 import { ArticleList } from './ArticleList';
@@ -59,6 +60,41 @@ function nextScope(scope: Scope, model: SidebarModel, has: (feedId: string) => b
 }
 
 /** Unread / All / Starred. Icons only on phones; icon and label on desktop. */
+/**
+ * Swiping an article row left: the row follows the finger over a strip saying what will happen,
+ * and past ~30% of the width (or with a flick) the read state flips as it snaps back.
+ */
+function rowSwipe(row: HTMLElement, onCommit: () => void): SwipeSession | null {
+  const front = row.querySelector<HTMLElement>('[data-swipe-front]');
+  const back = row.querySelector<HTMLElement>('[data-swipe-back]');
+  if (!front || !back) return null;
+  const width = row.offsetWidth;
+  const threshold = Math.min(width * 0.3, 140);
+  const limit = width * 0.6;
+  front.style.transition = 'none';
+  back.dataset.active = 'true';
+  const settle = (commit: boolean) => {
+    back.dataset.armed = String(commit);
+    if (commit) onCommit();
+    animateTo(front, 'translateX(0)', () => {
+      front.style.transform = '';
+      front.style.transition = '';
+      back.dataset.active = 'false';
+      back.dataset.armed = 'false';
+    });
+  };
+  return {
+    move(dx) {
+      let x = Math.min(0, dx);
+      if (x < -limit) x = -limit + (x + limit) * 0.3; // rubber-band past the limit
+      front.style.transform = `translateX(${x}px)`;
+      back.dataset.armed = String(-dx > threshold);
+    },
+    end: (dx, v) => settle(-dx > threshold || (v < -0.5 && dx < -40)),
+    cancel: () => settle(false),
+  };
+}
+
 function FilterTabs({ filter, scope }: { filter: Filter; scope: Scope }) {
   return (
     <div role="group" aria-label="Show" className="flex flex-none gap-0.5 rounded-full bg-seg-bg p-[3px] md:rounded-[10px]">
@@ -99,6 +135,17 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
 
   const [sideW, setSideW] = useState(() => clampSidebar(loadPref('sidebarWidth', SIDEBAR_DEFAULT)));
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // True while the drawer is following a finger (opening by swipe); it starts off-screen.
+  const [drawerDragging, setDrawerDragging] = useState(false);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const scrimRef = useRef<HTMLDivElement>(null);
+  // Elements the swipe gestures attach to, kept in state so listeners attach once they exist.
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const [drawerEl, setDrawerEl] = useState<HTMLDivElement | null>(null);
+  const drawerCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    drawerRef.current = node;
+    setDrawerEl(node);
+  }, []);
 
   const feedsById = useMemo(() => new Map((feeds.data ?? []).map((f) => [f.id, f])), [feeds.data]);
 
@@ -121,6 +168,99 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
     }
     return list;
   }, [entriesQuery.data, filter, viewKey]);
+
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+
+  // Phones: Back closes the drawer instead of leaving the view. Opening it adds a history entry
+  // (same URL) that Back pops; closing it any other way takes that entry back off.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    if (!history.state?.skimDrawer) history.pushState({ skimDrawer: true }, '');
+    const onPop = () => setDrawerOpen(false);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [drawerOpen]);
+
+  const dismissDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    if (history.state?.skimDrawer) history.back();
+  }, []);
+
+  // Picking a feed in the drawer follows its link, which replaces the drawer's entry with the new view;
+  // if nothing navigated (it was already selected), drop the entry like any other close.
+  const onDrawerPick = useCallback(() => {
+    setDrawerOpen(false);
+    setTimeout(() => history.state?.skimDrawer && history.back(), 0);
+  }, []);
+
+  /** Positions the drawer under the finger: 0 = closed, 1 = open. */
+  const placeDrawer = (p: number) => {
+    const d = drawerRef.current;
+    const s = scrimRef.current;
+    if (d) {
+      d.style.transition = 'none';
+      d.style.transform = `translateX(${(Math.min(1, Math.max(0, p)) - 1) * 100}%)`;
+    }
+    if (s) {
+      s.style.transition = 'none';
+      s.style.opacity = String(Math.min(1, Math.max(0, p)));
+    }
+  };
+
+  /** Lets go of the drawer: it slides fully open or closed. */
+  const settleDrawer = (open: boolean) => {
+    const d = drawerRef.current;
+    const s = scrimRef.current;
+    if (s) {
+      s.style.transition = 'opacity 200ms';
+      s.style.opacity = open ? '1' : '0';
+    }
+    const done = () => {
+      for (const el of [d, s]) el?.style.removeProperty('transition');
+      d?.style.removeProperty('transform');
+      s?.style.removeProperty('opacity');
+      setDrawerDragging(false);
+      if (!open) dismissDrawer();
+    };
+    if (d) animateTo(d, open ? 'translateX(0)' : 'translateX(-100%)', done);
+    else done();
+  };
+
+  const drawerWidth = () => drawerRef.current?.offsetWidth || Math.min(312, window.innerWidth * 0.85);
+
+  // Phones: on the article list, swipe left on an article to toggle read, or right to pull out the drawer.
+  useSwipe(listEl, (direction: SwipeDirection, target: Element): SwipeSession | null => {
+    if (direction === 'left') {
+      const row = target.closest<HTMLElement>('[data-swipe-row]');
+      if (!row) return null;
+      return rowSwipe(row, () => {
+        const e = entriesRef.current.find((x) => x.id === row.dataset.swipeRow);
+        if (e) actions.setRead([e], !e.read);
+      });
+    }
+    setDrawerDragging(true);
+    setDrawerOpen(true);
+    return {
+      move: (dx) => placeDrawer(dx / drawerWidth()),
+      end: (dx, v) => settleDrawer(v > 0.5 || (v > -0.3 && dx > drawerWidth() * 0.3)),
+      cancel: () => settleDrawer(false),
+    };
+  });
+
+  // Phones: swipe the open drawer left to close it.
+  useSwipe(
+    drawerEl,
+    (direction): SwipeSession | null =>
+      direction === 'left'
+        ? {
+            move: (dx) => placeDrawer(1 + Math.min(0, dx) / drawerWidth()),
+            end: (dx, v) => settleDrawer(!(v < -0.5 || (v < 0.3 && -dx > drawerWidth() * 0.3))),
+            cancel: () => settleDrawer(true),
+          }
+        : null,
+    drawerOpen,
+  );
 
   // Heading for the current view.
   let heading = 'All articles';
@@ -171,7 +311,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] md:pt-0">
-        <div className="min-h-0 flex-1">
+        <div ref={setListEl} className="min-h-0 flex-1">
           <ArticleList
             key={viewKey}
             entries={entries}
@@ -227,15 +367,17 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
         </nav>
       </main>
 
-      <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+      <Dialog.Root open={drawerOpen} onOpenChange={(open) => (open ? setDrawerOpen(true) : dismissDrawer())}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-30 bg-scrim md:hidden" />
+          <Dialog.Overlay ref={scrimRef} className="fixed inset-0 z-30 bg-scrim md:hidden" style={drawerDragging ? { opacity: 0 } : undefined} />
           <Dialog.Content
+            ref={drawerCallbackRef}
             aria-describedby={undefined}
+            style={drawerDragging ? { transform: 'translateX(-100%)' } : undefined}
             className="fixed inset-y-0 left-0 z-40 w-[312px] max-w-[85vw] bg-side shadow-2xl focus:outline-none md:hidden"
           >
             <Dialog.Title className="sr-only">Feeds</Dialog.Title>
-            <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={() => setDrawerOpen(false)} />
+            <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={onDrawerPick} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

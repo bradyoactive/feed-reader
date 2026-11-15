@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { GroupedVirtuoso } from 'react-virtuoso';
+import { CircleCheck, CircleDot } from 'lucide-react';
 import type { Entry, Feed } from '../api/types';
 import type { Actions } from '../hooks/data';
 import { groupByDay, type DayGroup } from '../lib/dates';
@@ -84,15 +85,26 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
         const entry = flat[i];
         return (
           <div className={column}>
-            <ArticleItem
-              entry={entry}
-              feed={feedsById.get(entry.feedId)}
-              onOpen={onOpen}
-              onToggleRead={onToggleRead}
-              onToggleStar={onToggleStar}
-              onReadAbove={onReadAbove}
-              onReadBelow={onReadBelow}
-            />
+            {/* Phones: swipe the article left to reveal this strip and toggle read (see Reader). */}
+            <div className="relative" data-swipe-row={entry.id}>
+              <div
+                data-swipe-back
+                aria-hidden
+                className="invisible absolute inset-y-0 left-0 -right-3 flex items-center justify-end gap-2 bg-seg-bg pr-6 text-[13px] font-semibold text-muted2 transition-colors duration-150 data-[active=true]:visible data-[armed=true]:bg-accent data-[armed=true]:text-on-accent md:hidden"
+              >
+                {entry.read ? <CircleDot size={20} aria-hidden /> : <CircleCheck size={20} aria-hidden />}
+                {entry.read ? 'Unread' : 'Read'}
+              </div>
+              <ArticleItem
+                entry={entry}
+                feed={feedsById.get(entry.feedId)}
+                onOpen={onOpen}
+                onToggleRead={onToggleRead}
+                onToggleStar={onToggleStar}
+                onReadAbove={onReadAbove}
+                onReadBelow={onReadBelow}
+              />
+            </div>
           </div>
         );
       }}

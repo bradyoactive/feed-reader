@@ -29,7 +29,7 @@ export const ArticleItem = memo(function ArticleItem({ entry, feed, onOpen, onTo
   const open = () => onOpen(entry);
 
   return (
-    <article className="flex gap-3 border-b border-rule pt-3.5 pb-0.5 md:pt-4 md:pb-2.5">
+    <article data-swipe-front className="flex gap-3 border-b bg-bg border-rule pt-3.5 pb-0.5 md:pt-4 md:pb-2.5">
       <span
         aria-hidden
         className="mt-[7px] hidden h-2 w-2 flex-none rounded-full md:mt-[31px] md:block"
