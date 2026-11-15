@@ -17,7 +17,7 @@ import {
   type SidebarModel,
 } from '../hooks/data';
 import { animateTo, useSwipe, type SwipeDirection, type SwipeSession } from '../hooks/swipe';
-import { navigate, routeHash, scopeKey, useRoute } from '../lib/route';
+import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } from '../lib/route';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
 import { ArticleList } from './ArticleList';
 import { clampSidebar, Resizer, SIDEBAR_DEFAULT } from './Resizer';
@@ -121,7 +121,7 @@ function FilterTabs({ filter, scope }: { filter: Filter; scope: Scope }) {
 }
 
 export function Reader({ connection }: { connection: ConnectionConfig }) {
-  const { scope, filter } = useRoute();
+  const { scope, filter, ready } = useRoute();
   const viewKey = `${scopeKey(scope)}|${filter}`;
   const stableScope = useMemo(() => scope, [viewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -131,7 +131,19 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const categories = useCategories();
   const unread = useUnreadCounts();
   const model = useSidebarModel();
-  const entriesQuery = useEntries(stableScope, filter, feeds.data);
+  const entriesQuery = useEntries(stableScope, filter, feeds.data, ready);
+
+  // URLs use category and feed names; the router matches them to ids using the current lists.
+  useEffect(() => setRouteNames(categories.data ?? null, feeds.data ?? null), [categories.data, feeds.data]);
+  useEffect(() => () => setRouteNames(null, null), []);
+
+  // Once names are known: send a link to something that no longer exists to All, and rewrite
+  // older id-style links (or a renamed feed's old name) to the current name, without a new history entry.
+  useEffect(() => {
+    if (!ready) return;
+    const canonical = scopeExists(scope) ? routeHash(scope, filter) : routeHash({ kind: 'all' }, filter);
+    if (decodeURIComponent(location.hash) !== decodeURIComponent(canonical)) location.replace(canonical);
+  }, [ready, scope, filter]);
 
   const [sideW, setSideW] = useState(() => clampSidebar(loadPref('sidebarWidth', SIDEBAR_DEFAULT)));
   const [drawerOpen, setDrawerOpen] = useState(false);

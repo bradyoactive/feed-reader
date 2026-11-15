@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-query';
 import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
 import { describeError, UNCATEGORIZED } from '../api/types';
-import { scopeKey } from '../lib/route';
+import { scopeKey, setRouteNames } from '../lib/route';
 import { toast } from '../lib/toast';
 
 export const BackendContext = createContext<Backend | null>(null);
@@ -84,12 +84,13 @@ export function feedsInScope(scope: Scope, feeds: Feed[]): Set<string> {
   return new Set(feeds.map((f) => f.id));
 }
 
-export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefined) {
+/** `ready` is false while the view in the URL is still being matched to a feed or category. */
+export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefined, ready = true) {
   const b = useBackend();
   const feedIds = useMemo(() => (feeds ? feedsInScope(scope, feeds) : new Set<string>()), [scope, feeds]);
   return useInfiniteQuery({
     queryKey: keys.entries(scope, filter),
-    enabled: !!feeds,
+    enabled: !!feeds && ready,
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<Page> => {
       const fetchedAt = Date.now();
@@ -235,6 +236,8 @@ export function useActions(): Actions {
         qc.invalidateQueries({ queryKey: keys.categories }),
         qc.invalidateQueries({ queryKey: ['counts'] }),
       ]);
+      // Let the router know the new feed's name now, so navigating to it straight away resolves.
+      setRouteNames(qc.getQueryData<Category[]>(keys.categories) ?? null, qc.getQueryData<Feed[]>(keys.feeds) ?? null);
       return id;
     },
     [b, qc],
