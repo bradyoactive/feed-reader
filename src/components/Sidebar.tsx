@@ -273,7 +273,6 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
       </nav>
 
       <div className="flex flex-none items-center gap-2.5 rounded-[10px] border border-border bg-bg py-2.5 pr-1.5 pl-3">
-        <span aria-hidden className="h-2 w-2 flex-none rounded-full bg-ok" />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="text-[13px] font-semibold">{account.title}</span>
           <span className="truncate text-xs text-muted">
