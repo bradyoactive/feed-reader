@@ -281,10 +281,10 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
     document.title = total ? `(${total}) ${heading} · Skim` : `${heading} · Skim`;
   }, [unread.data, heading]);
 
+  // Marks read every article loaded in this view (anything further down that isn't loaded stays unread),
+  // then moves on. setRead updates the counts at once, so the ones read below are already current.
   const markAll = () => {
-    const before = entriesQuery.data?.pages[0]?.fetchedAt ?? Date.now();
-    // The optimistic part of markScopeRead runs before its first await, so counts below are already updated.
-    void actions.markScopeRead(scope, before);
+    actions.setRead(entries, true);
     if (!model) return;
     const counts =
       filter === 'starred'

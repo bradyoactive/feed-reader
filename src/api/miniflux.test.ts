@@ -202,10 +202,10 @@ describe('miniflux', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ entry_ids: [1], starred: true });
   });
 
-  it('marks only the loaded entries for a whole scope, with no extra requests', async () => {
+  it('marks many entries read in batches of 500', async () => {
     const f = mockFetch(() => undefined);
     const loaded = Array.from({ length: 600 }, (_, i) => toEntry(entry(i + 1, '2026-11-11T10:00:00Z')));
-    await new MinifluxBackend(config).markScopeRead({ kind: 'category', id: '2' }, Date.now(), loaded);
+    await new MinifluxBackend(config).setRead(loaded, true);
     expect(f.mock.calls.map((c) => [String(c[0]), c[1]!.method])).toEqual([
       ['https://rss.test/v1/entries', 'PUT'],
       ['https://rss.test/v1/entries', 'PUT'],
@@ -217,9 +217,9 @@ describe('miniflux', () => {
     ]);
   });
 
-  it('does nothing when no unread entries are loaded', async () => {
+  it('sends nothing when there are no entries to mark', async () => {
     const f = mockFetch(() => undefined);
-    await new MinifluxBackend(config).markScopeRead({ kind: 'all' }, Date.now(), []);
+    await new MinifluxBackend(config).setRead([], true);
     expect(f).not.toHaveBeenCalled();
   });
 });

@@ -99,7 +99,6 @@ export function useBackend(): Backend {
 }
 
 type Counts = Record<string, number>;
-type Page = EntryPage & { fetchedAt: number };
 
 const keys = {
   categories: ['categories'] as const,
@@ -155,11 +154,7 @@ export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefin
     queryKey: keys.entries(scope, filter),
     enabled: !!feeds && ready,
     initialPageParam: undefined as string | undefined,
-    queryFn: async ({ pageParam }): Promise<Page> => {
-      const fetchedAt = Date.now();
-      const page = await b.getEntries({ scope, filter, cursor: pageParam, feedIds });
-      return { ...page, fetchedAt };
-    },
+    queryFn: ({ pageParam }): Promise<EntryPage> => b.getEntries({ scope, filter, cursor: pageParam, feedIds }),
     getNextPageParam: (last) => last.nextCursor,
     // The list is a snapshot: items you read stay (dimmed) until you change view or refresh.
     staleTime: Infinity,
@@ -169,7 +164,7 @@ export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefin
 
 /** Applies `fn` to every cached entry, in every list. */
 function patchEntries(qc: QueryClient, fn: (e: Entry) => Entry) {
-  qc.setQueriesData<InfiniteData<Page>>({ queryKey: ['entries'] }, (data) =>
+  qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
     data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: p.entries.map(fn) })) },
   );
 }
@@ -186,7 +181,6 @@ function bump(qc: QueryClient, key: readonly unknown[], deltas: Counts) {
 export interface Actions {
   setRead(entries: Entry[], read: boolean): void;
   setStarred(entry: Entry, starred: boolean): void;
-  markScopeRead(scope: Scope, before: number): Promise<void>;
   sync(): Promise<void>;
   /** Subscribes and reloads the feed list. Resolves to the new feed's id; rejects with the server's reason. */
   subscribe(url: string, category: CategoryChoice): Promise<string>;
@@ -230,39 +224,6 @@ export function useActions(): Actions {
       patchEntries(qc, (e) => (e.id === entry.id ? { ...e, starred } : e));
       bump(qc, keys.starred, { [entry.feedId]: starred ? 1 : -1 });
       trackWrite(() => b.setStarred(entry, starred)).catch(resync);
-    },
-    [b, qc, resync],
-  );
-
-  const markScopeRead = useCallback(
-    async (scope: Scope, before: number) => {
-      const feeds = qc.getQueryData<Feed[]>(keys.feeds) ?? [];
-      const inScope = feedsInScope(scope, feeds);
-      // Loaded entries this marks, by id (the same entry can sit in several cached lists).
-      const loaded = new Map<string, Entry>();
-      patchEntries(qc, (e) => {
-        if (!inScope.has(e.feedId) || e.published > before || e.read) return e;
-        loaded.set(e.id, e);
-        return { ...e, read: true };
-      });
-      // Counts follow what the server will mark, so they're right without reloading (until the next Sync).
-      if (b.marksWholeScope) {
-        qc.setQueryData<Counts>(keys.unread, (old) => {
-          if (!old) return old;
-          const next = { ...old };
-          inScope.forEach((id) => (next[id] = 0));
-          return next;
-        });
-      } else {
-        const deltas: Counts = {};
-        for (const e of loaded.values()) deltas[e.feedId] = (deltas[e.feedId] ?? 0) - 1;
-        bump(qc, keys.unread, deltas);
-      }
-      try {
-        await trackWrite(() => b.markScopeRead(scope, before, [...loaded.values()]));
-      } catch (err) {
-        resync(err);
-      }
     },
     [b, qc, resync],
   );
@@ -321,7 +282,7 @@ export function useActions(): Actions {
         delete next[feed.id];
         return next;
       });
-      qc.setQueriesData<InfiniteData<Page>>({ queryKey: ['entries'] }, (data) =>
+      qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
         data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: p.entries.filter((e) => e.feedId !== feed.id) })) },
       );
       b.unsubscribe(feed.id)
@@ -336,8 +297,8 @@ export function useActions(): Actions {
   );
 
   return useMemo(
-    () => ({ setRead, setStarred, markScopeRead, sync, subscribe, unsubscribe }),
-    [setRead, setStarred, markScopeRead, sync, subscribe, unsubscribe],
+    () => ({ setRead, setStarred, sync, subscribe, unsubscribe }),
+    [setRead, setStarred, sync, subscribe, unsubscribe],
   );
 }
 

@@ -1,7 +1,7 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, readableError, request } from './http';
 import { AuthError, HttpError, UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
 
 const PAGE_SIZE = 50;
 const READING_LIST = 'user/-/state/com.google/reading-list';
@@ -88,7 +88,6 @@ export function toEntry(item: GrItem): Entry {
 
 export class GReaderBackend implements Backend {
   readonly kind = 'greader' as const;
-  readonly marksWholeScope = true;
   private readonly config: GReaderConfig;
   private writeToken: string | null = null;
 
@@ -274,16 +273,5 @@ export class GReaderBackend implements Backend {
 
   async setStarred(entry: Entry, starred: boolean): Promise<void> {
     await this.post('/reader/api/0/edit-tag', [['i', entry.id], [starred ? 'a' : 'r', STARRED]]);
-  }
-
-  async markScopeRead(scope: Scope, before: number): Promise<void> {
-    const ts = String(Math.floor(before) * 1000); // microseconds
-    if (scope.kind === 'category' && scope.id === UNCATEGORIZED) {
-      const feeds = (await this.getFeeds()).filter((f) => f.categoryId === UNCATEGORIZED);
-      for (const f of feeds) await this.post('/reader/api/0/mark-all-as-read', [['s', f.id], ['ts', ts]]);
-      return;
-    }
-    const s = scope.kind === 'all' ? READING_LIST : scope.id;
-    await this.post('/reader/api/0/mark-all-as-read', [['s', s], ['ts', ts]]);
   }
 }

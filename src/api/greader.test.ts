@@ -159,16 +159,4 @@ describe('greader', () => {
     await new GReaderBackend(config).unsubscribe('feed/5');
     expect(Object.fromEntries(bodies[0])).toMatchObject({ ac: 'unsubscribe', s: 'feed/5' });
   });
-
-  it('marks a folder read with a microsecond timestamp', async () => {
-    const bodies: URLSearchParams[] = [];
-    mockFetch((url, init) => {
-      if (url.pathname.endsWith('/token')) return new Response('T');
-      bodies.push(new URLSearchParams(String(init.body)));
-      return new Response('OK');
-    });
-    await new GReaderBackend(config).markScopeRead({ kind: 'category', id: 'user/-/label/Tech' }, 1_800_000_000_123);
-    expect(bodies[0].get('s')).toBe('user/-/label/Tech');
-    expect(bodies[0].get('ts')).toBe('1800000000123000');
-  });
 });

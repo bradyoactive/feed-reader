@@ -1,4 +1,4 @@
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -85,7 +85,6 @@ const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms));
 
 export class DemoBackend implements Backend {
   readonly kind = 'demo' as const;
-  readonly marksWholeScope = true;
   private entries = buildEntries();
   private categories = CATEGORIES.map((c) => ({ ...c }));
   private feeds = FEEDS.map((f) => ({ ...f }));
@@ -172,17 +171,6 @@ export class DemoBackend implements Backend {
     await wait(80);
     const e = this.entries.find((x) => x.id === entry.id);
     if (e) e.starred = starred;
-  }
-
-  async markScopeRead(scope: Scope, before: number) {
-    await wait(80);
-    const feedIds =
-      scope.kind === 'all'
-        ? null
-        : new Set(this.feeds.filter((f) => (scope.kind === 'feed' ? f.id === scope.id : f.categoryId === scope.id)).map((f) => f.id));
-    this.entries.forEach((e) => {
-      if ((!feedIds || feedIds.has(e.feedId)) && e.published <= before) e.read = true;
-    });
   }
 
   private arrivals = 0;

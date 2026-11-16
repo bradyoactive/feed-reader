@@ -69,7 +69,6 @@ export function toEntry(e: MfEntry): Entry {
 
 export class MinifluxBackend implements Backend {
   readonly kind = 'miniflux' as const;
-  readonly marksWholeScope = false;
   private readonly config: MinifluxConfig;
 
   constructor(config: MinifluxConfig) {
@@ -208,24 +207,18 @@ export class MinifluxBackend implements Backend {
   }
 
   async setRead(entries: Entry[], read: boolean): Promise<void> {
-    if (entries.length === 0) return;
-    await this.call('/v1/entries', {
-      method: 'PUT',
-      body: JSON.stringify({ entry_ids: entries.map((e) => Number(e.id)), status: read ? 'read' : 'unread' }),
-    });
+    // Batch to keep request bodies a sensible size.
+    for (let i = 0; i < entries.length; i += 500) {
+      await this.call('/v1/entries', {
+        method: 'PUT',
+        body: JSON.stringify({ entry_ids: entries.slice(i, i + 500).map((e) => Number(e.id)), status: read ? 'read' : 'unread' }),
+      });
+    }
   }
 
   async setStarred(entry: Entry, starred: boolean): Promise<void> {
     // Sets the state outright (Miniflux 2.3.2+), so it's right whatever another device did meanwhile.
     await this.call('/v1/entries', { method: 'PUT', body: JSON.stringify({ entry_ids: [Number(entry.id)], starred }) });
-  }
-
-  /**
-   * Marks read exactly the entries loaded here, never anything you haven't been shown (Miniflux's own
-   * mark-all-as-read would also take articles that arrived after the list was loaded).
-   */
-  async markScopeRead(_scope: Scope, _before: number, loaded: Entry[]): Promise<void> {
-    for (let i = 0; i < loaded.length; i += 500) await this.setRead(loaded.slice(i, i + 500), true);
   }
 }
 

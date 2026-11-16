@@ -66,7 +66,6 @@ Behaviour worth knowing:
 - **Sync** waits for your changes to reach the server, then reloads everything from it: counts, feeds and the lists
   on screen (every page you've loaded). Nothing reloads on its own; your server fetches feeds on its own schedule.
 - **Read above / below** act on the articles loaded in the current view, in on-screen order.
-- **Mark all read** marks the feed, category or everything read, up to when the list was loaded (on Miniflux, just the
-  articles loaded in Skim; anything further down stays unread), then moves to the next feed or
-  category that still has items under the current filter.
+- **Mark all read** marks the articles loaded in the current view read (anything further down that isn't loaded yet
+  stays unread), then moves to the next feed or category that still has items under the current filter.
 - Clicking a title opens the article in a new tab and marks it read.
