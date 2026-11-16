@@ -12,6 +12,7 @@ import {
   useEntries,
   useFeeds,
   useSidebarModel,
+  useSyncOnLaunch,
   useUnreadCounts,
   type SidebarModel,
 } from '../hooks/data';
@@ -133,6 +134,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const unread = useUnreadCounts();
   const model = useSidebarModel();
   const entriesQuery = useEntries(stableScope, filter, feeds.data, ready);
+  useSyncOnLaunch(actions.sync);
 
   // URLs use category and feed names; the router matches them to ids using the current lists.
   useEffect(() => setRouteNames(categories.data ?? null, feeds.data ?? null), [categories.data, feeds.data]);
@@ -290,7 +292,8 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
     if (next) navigate(routeHash(next, filter));
   };
 
-  const error = entriesQuery.error ?? feeds.error;
+  // A failed reload keeps the last good data on screen (offline, say); errors show only when there's nothing.
+  const error = (!entriesQuery.data && entriesQuery.error) || (!feeds.data && feeds.error) || null;
 
   return (
     <div className="flex h-dvh bg-bg text-text">

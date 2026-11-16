@@ -1,26 +1,30 @@
 import { useMemo, useState } from 'react';
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider, type Query } from '@tanstack/react-query';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createBackend } from './api';
-import { AuthError } from './api/types';
+import { AuthError, isNetworkError } from './api/types';
 import { ConnectScreen } from './components/ConnectScreen';
 import { Reader } from './components/Reader';
 import { Toasts } from './components/Toasts';
 import { BackendContext } from './hooks/data';
-import { cacheKey, clearConnection, loadConnection, localStore, saveConnection, type ConnectionConfig } from './lib/storage';
+import { cacheKey, clearConnection, loadConnection, saveConnection, type ConnectionConfig } from './lib/storage';
+import { idbPersister } from './lib/persist';
 import { navigate, useRoute } from './lib/route';
 
+/** What's kept on the device between launches, so Skim opens with your lists and works offline. */
+const PERSISTED = new Set(['categories', 'feeds', 'counts', 'entries', 'feedIcon', 'meta']);
+
 /**
- * Only feed icons are kept between launches (so they aren't downloaded again every time); everything else
- * comes fresh from the server. Large icons are skipped to spare the storage quota.
+ * The cache is saved in IndexedDB per connection. A query that failed to reload (offline) still has its
+ * last good data, and that is what's kept.
  */
 const persistOptions = (config: ConnectionConfig) => ({
-  persister: createSyncStoragePersister({ storage: localStore, key: cacheKey(config) }),
+  persister: idbPersister(cacheKey(config)),
   maxAge: 30 * 86_400_000,
+  // Bump when the saved shapes change, so an old cache is dropped instead of misread.
+  buster: 'offline-1',
   dehydrateOptions: {
-    shouldDehydrateQuery: (q: Query) =>
-      q.queryKey[0] === 'feedIcon' && q.state.status === 'success' && String(q.state.data ?? '').length <= 24_000,
+    shouldDehydrateQuery: (q: Query) => q.state.data !== undefined && PERSISTED.has(q.queryKey[0] as string),
   },
 });
 
@@ -40,8 +44,11 @@ export function App() {
       mutationCache: new MutationCache({ onError }),
       defaultOptions: {
         queries: {
-          retry: (n, err) => !(err instanceof AuthError) && n < 2,
+          // Without a connection there's no point retrying: fail at once and keep showing what's saved.
+          retry: (n, err) => !(err instanceof AuthError) && !isNetworkError(err) && n < 2,
           refetchOnWindowFocus: false,
+          // Always try the server (navigator.onLine can't be trusted), and fall back to saved data.
+          networkMode: 'offlineFirst',
         },
         // Writes and syncs fail straight away offline (as fetch does) rather than pausing, so Sync never waits forever.
         mutations: { networkMode: 'always' },
@@ -52,6 +59,8 @@ export function App() {
 
   const connect = (next: ConnectionConfig, remember: boolean) => {
     saveConnection(next, remember);
+    // Ask the browser not to clear saved articles under storage pressure (granted silently, or not at all).
+    if (next.kind !== 'demo') void navigator.storage?.persist?.().catch(() => {});
     setAuthError(null);
     setConfig(next);
     navigate('#/');

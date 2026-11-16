@@ -1,10 +1,11 @@
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import {
+  skipToken,
   useInfiniteQuery,
   useIsFetching,
   useIsMutating,
+  useIsRestoring,
   useMutation,
-  useMutationState,
   useQuery,
   useQueryClient,
   type InfiniteData,
@@ -19,7 +20,10 @@ import { toast } from '../lib/toast';
 export const BackendContext = createContext<Backend | null>(null);
 
 export interface SyncState {
-  /** When this connection last synced: the start of the initial load, or of the last Sync that succeeded. */
+  /**
+   * When this connection last synced: the start of the initial load, or of the last Sync that succeeded.
+   * Saved with the cache, so it survives a restart.
+   */
   last: number;
   /** True from the start of a sync (the initial load counts as one) until everything it reloads is in. */
   syncing: boolean;
@@ -75,8 +79,26 @@ export function useSyncState(): SyncState {
         return kind === 'entries' && !qc.getQueryCache().findAll({ queryKey: ['entries'] }).some((e) => e.state.dataUpdatedAt > 0);
       },
     }) > 0;
-  const synced = useMutationState({ filters: { mutationKey: SYNC, status: 'success' }, select: (m) => m.state.submittedAt });
-  return { syncing: syncing || loading, last: synced.length ? Math.max(...synced) : connectedAt.get(b)! };
+  const saved = useQuery<number>({ queryKey: keys.lastSync, queryFn: skipToken }).data;
+  return { syncing: syncing || loading, last: saved ?? connectedAt.get(b)! };
+}
+
+/**
+ * Once the saved cache is restored: if it held anything, show it and Sync straight away (the launch counts
+ * as a sync, as the initial load does without a saved cache). Otherwise the lists load as usual, and that
+ * initial load is recorded as the last sync.
+ */
+export function useSyncOnLaunch(sync: () => Promise<void>) {
+  const b = useBackend();
+  const qc = useQueryClient();
+  const restoring = useIsRestoring();
+  const done = useRef(false);
+  useEffect(() => {
+    if (restoring || done.current) return;
+    done.current = true;
+    if (qc.getQueryData(keys.lastSync) != null && qc.getQueryData(keys.feeds)) void sync();
+    else qc.setQueryData(keys.lastSync, connectedAt.get(b)!);
+  }, [restoring, qc, b, sync]);
 }
 
 type Counts = Record<string, number>;
@@ -88,6 +110,8 @@ const keys = {
   starred: ['counts', 'starred'] as const,
   total: ['counts', 'total'] as const,
   entries: (scope: Scope, filter: Filter) => ['entries', scopeKey(scope), filter] as const,
+  /** When the last sync started (ms). Set here, never fetched. */
+  lastSync: ['meta', 'lastSync'] as const,
 };
 
 export function useCategories() {
@@ -197,9 +221,8 @@ export function useActions(): Actions {
   // Reload everything from the server. The server fetches feeds on its own schedule; this doesn't ask it to.
   const { mutateAsync: runSync } = useMutation({
     mutationKey: SYNC,
-    // Kept for the session: the last successful one says when you last synced.
-    gcTime: Infinity,
     mutationFn: async () => {
+      const startedAt = Date.now();
       // Wait for your changes to reach the server first. A change made while the reload runs is
       // overwritten by it, so then wait for that one too and reload again (a few times at most).
       for (let i = 0; i < 3; i++) {
@@ -215,6 +238,7 @@ export function useActions(): Actions {
       }
       const failed = qc.getQueryCache().findAll({ type: 'active', predicate: isSynced }).find((q) => q.state.status === 'error');
       if (failed) throw failed.state.error;
+      qc.setQueryData(keys.lastSync, startedAt);
     },
     onError: (err) => toast(describeError(err), 'error'),
   });

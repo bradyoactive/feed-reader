@@ -43,7 +43,7 @@ header Access-Control-Allow-Methods "GET, POST, PUT, OPTIONS"
 
 ### Install as an app
 
-Skim is a PWA. On a phone, use Share → **Add to Home Screen** (iOS) or **Install app** (Android); on desktop, use the install icon in Chrome or Edge's address bar. It opens full screen, and a service worker caches Skim's own files so it starts instantly, even offline. Your RSS server is never cached: articles always come from it. An app installed from Safari keeps its own storage, so you connect once more inside it.
+Skim is a PWA. On a phone, use Share → **Add to Home Screen** (iOS) or **Install app** (Android); on desktop, use the install icon in Chrome or Edge's address bar. It opens full screen, and a service worker caches Skim's own files so it starts instantly, even offline. Your lists, counts and the articles you've loaded are saved on the device (in IndexedDB, per connection) and shown straight away the next time it opens, followed by a sync. Signing out deletes them. An app installed from Safari keeps its own storage, so you connect once more inside it.
 
 New deploys are picked up automatically the next time the app is opened.
 

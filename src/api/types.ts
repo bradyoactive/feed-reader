@@ -97,11 +97,14 @@ export class HttpError extends Error {
   }
 }
 
+/** fetch() throws a TypeError when the request never got an answer: offline, DNS, or blocked by CORS. */
+export const isNetworkError = (err: unknown): err is TypeError => err instanceof TypeError;
+
 /** Gives a friendly message for the errors fetch() throws on CORS / network failure. */
 export function describeError(err: unknown): string {
   if (err instanceof AuthError) return err.message;
   if (err instanceof HttpError) return `The server answered ${err.status}: ${err.message}`;
-  if (err instanceof TypeError) {
+  if (isNetworkError(err)) {
     return 'Could not reach the server. Check the URL, and that the server allows cross-origin requests from this site.';
   }
   return err instanceof Error ? err.message : String(err);
