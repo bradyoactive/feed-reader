@@ -92,6 +92,7 @@ export function toEntry(item: GrItem): Entry {
 
 export class GReaderBackend implements Backend {
   readonly kind = 'greader' as const;
+  readonly marksWholeScope = true;
   private readonly config: GReaderConfig;
   private writeToken: string | null = null;
 

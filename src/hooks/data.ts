@@ -177,25 +177,32 @@ export function useActions(): Actions {
     async (scope: Scope, before: number) => {
       const feeds = qc.getQueryData<Feed[]>(keys.feeds) ?? [];
       const inScope = feedsInScope(scope, feeds);
+      // Loaded entries this marks, by id (the same entry can sit in several cached lists).
+      const loaded = new Map<string, Entry>();
       patchEntries(qc, (e) => {
-        if (!inScope.has(e.feedId) || e.published > before) return e;
+        if (!inScope.has(e.feedId) || e.published > before || e.read) return e;
         noteLocalEdit([e.id]);
-        return e.read ? e : { ...e, read: true };
+        loaded.set(e.id, e);
+        return { ...e, read: true };
       });
-      qc.setQueryData<Counts>(keys.unread, (old) => {
-        if (!old) return old;
-        const next = { ...old };
-        inScope.forEach((id) => (next[id] = 0));
-        return next;
-      });
+      // Counts follow what the server will mark, so they're right without reloading (until the next Sync).
+      if (b.marksWholeScope) {
+        qc.setQueryData<Counts>(keys.unread, (old) => {
+          if (!old) return old;
+          const next = { ...old };
+          inScope.forEach((id) => (next[id] = 0));
+          return next;
+        });
+      } else {
+        const deltas: Counts = {};
+        for (const e of loaded.values()) deltas[e.feedId] = (deltas[e.feedId] ?? 0) - 1;
+        bump(qc, keys.unread, deltas);
+      }
       try {
-        await b.markScopeRead(scope, before);
+        await b.markScopeRead(scope, before, [...loaded.values()]);
       } catch (err) {
         resync(err);
-        return;
       }
-      // Pick up anything newer than the snapshot that the optimistic zero hid.
-      void qc.invalidateQueries({ queryKey: keys.unread });
     },
     [b, qc, resync],
   );

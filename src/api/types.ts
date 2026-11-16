@@ -85,8 +85,16 @@ export interface Backend {
   getEntries(query: EntryQuery): Promise<EntryPage>;
   setRead(entries: Entry[], read: boolean): Promise<void>;
   setStarred(entry: Entry, starred: boolean): Promise<void>;
-  /** Marks everything in scope read that was published before `before` (ms), where the server supports it. */
-  markScopeRead(scope: Scope, before: number): Promise<void>;
+  /**
+   * How markScopeRead works here: true marks everything in scope up to `before` (so its unread counts
+   * become 0); false marks only the `loaded` entries passed in (unloaded unread ones stay unread).
+   */
+  readonly marksWholeScope: boolean;
+  /**
+   * "Mark all read" for a scope. `loaded` is the unread entries in scope that are loaded here (published
+   * before `before`, ms). See marksWholeScope.
+   */
+  markScopeRead(scope: Scope, before: number, loaded: Entry[]): Promise<void>;
   /** New articles and read/star changes since `since` (ms), made here or on another device. */
   getChanges(since: number): Promise<Changes>;
   /** Subscribes to a feed address in a category. Returns the new feed's id. */

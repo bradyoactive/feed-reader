@@ -48,7 +48,7 @@ async function call<T>(url: string, auth: MinifluxAuth, path: string, init: Requ
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-/** Checks the credentials and returns the user id, which mark-all-as-read needs. */
+/** Checks the credentials and returns the user id (kept in the saved connection; nothing reads it now). */
 export async function minifluxLogin(url: string, auth: MinifluxAuth): Promise<number> {
   const me = await call<{ id: number }>(url, auth, '/v1/me');
   return me.id;
@@ -71,6 +71,7 @@ export function toEntry(e: MfEntry): Entry {
 
 export class MinifluxBackend implements Backend {
   readonly kind = 'miniflux' as const;
+  readonly marksWholeScope = false;
   private readonly config: MinifluxConfig;
 
   constructor(config: MinifluxConfig) {
@@ -259,14 +260,12 @@ export class MinifluxBackend implements Backend {
     await this.call('/v1/entries', { method: 'PUT', body: JSON.stringify({ entry_ids: [Number(entry.id)], starred }) });
   }
 
-  async markScopeRead(scope: Scope): Promise<void> {
-    const path =
-      scope.kind === 'feed'
-        ? `/v1/feeds/${scope.id}/mark-all-as-read`
-        : scope.kind === 'category'
-          ? `/v1/categories/${scope.id}/mark-all-as-read`
-          : `/v1/users/${this.config.userId}/mark-all-as-read`;
-    await this.call(path, { method: 'PUT' });
+  /**
+   * Marks read exactly the entries loaded here, never anything you haven't been shown (Miniflux's own
+   * mark-all-as-read would also take articles that arrived after the list was loaded).
+   */
+  async markScopeRead(_scope: Scope, _before: number, loaded: Entry[]): Promise<void> {
+    for (let i = 0; i < loaded.length; i += 500) await this.setRead(loaded.slice(i, i + 500), true);
   }
 }
 

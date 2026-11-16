@@ -220,16 +220,24 @@ describe('miniflux', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ entry_ids: [1], starred: true });
   });
 
-  it('marks a whole scope read via the right endpoint', async () => {
+  it('marks only the loaded entries for a whole scope, with no extra requests', async () => {
     const f = mockFetch(() => undefined);
-    const b = new MinifluxBackend(config);
-    await b.markScopeRead({ kind: 'feed', id: '5' });
-    await b.markScopeRead({ kind: 'category', id: '2' });
-    await b.markScopeRead({ kind: 'all' });
-    expect(f.mock.calls.map((c) => new URL(String(c[0])).pathname)).toEqual([
-      '/v1/feeds/5/mark-all-as-read',
-      '/v1/categories/2/mark-all-as-read',
-      '/v1/users/7/mark-all-as-read',
+    const loaded = Array.from({ length: 600 }, (_, i) => toEntry(entry(i + 1, '2026-11-11T10:00:00Z')));
+    await new MinifluxBackend(config).markScopeRead({ kind: 'category', id: '2' }, Date.now(), loaded);
+    expect(f.mock.calls.map((c) => [String(c[0]), c[1]!.method])).toEqual([
+      ['https://rss.test/v1/entries', 'PUT'],
+      ['https://rss.test/v1/entries', 'PUT'],
     ]);
+    const bodies = f.mock.calls.map((c) => JSON.parse(String(c[1]!.body)));
+    expect(bodies.map((b) => [b.entry_ids.length, b.status])).toEqual([
+      [500, 'read'],
+      [100, 'read'],
+    ]);
+  });
+
+  it('does nothing when no unread entries are loaded', async () => {
+    const f = mockFetch(() => undefined);
+    await new MinifluxBackend(config).markScopeRead({ kind: 'all' }, Date.now(), []);
+    expect(f).not.toHaveBeenCalled();
   });
 });

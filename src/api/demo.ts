@@ -85,6 +85,7 @@ const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms));
 
 export class DemoBackend implements Backend {
   readonly kind = 'demo' as const;
+  readonly marksWholeScope = true;
   private entries = buildEntries();
   private categories = CATEGORIES.map((c) => ({ ...c }));
   private feeds = FEEDS.map((f) => ({ ...f }));

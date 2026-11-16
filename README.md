@@ -64,6 +64,7 @@ Behaviour worth knowing:
 - Lists are snapshots: items you mark read stay visible (dimmed) until you change view or refresh, so nothing jumps
   under the cursor. The sidebar keeps feeds listed for the same reason.
 - **Read above / below** act on the articles loaded in the current view, in on-screen order.
-- **Mark all read** marks the whole feed, category or everything on the server, then moves to the next feed or
+- **Mark all read** marks the feed, category or everything read, up to when the list was loaded (on Miniflux, just the
+  articles loaded in Skim; anything further down stays unread), then moves to the next feed or
   category that still has items under the current filter.
 - Clicking a title opens the article in a new tab and marks it read.
