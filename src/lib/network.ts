@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { onlineManager } from '@tanstack/react-query';
 
 /**
@@ -28,3 +29,14 @@ export function retryConnection() {
   clearTimeout(probe);
   if (typeof navigator === 'undefined' || navigator.onLine) onlineManager.setOnline(true);
 }
+
+/** Whether Skim can reach the server, as far as it knows. */
+export function useOnline(): boolean {
+  return useSyncExternalStore(
+    (cb) => onlineManager.subscribe(cb),
+    () => onlineManager.isOnline(),
+  );
+}
+
+/** Why the server can't be reached: no network at all, or a network that doesn't get there. */
+export const offlineLabel = () => (typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'can’t reach server');

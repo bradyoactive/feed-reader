@@ -4,6 +4,7 @@ import type { Feed, Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
 import { withScheme } from '../api/http';
 import { queryKeys, useActions, useCategories, useFeeds } from '../hooks/data';
+import { useOnline } from '../lib/network';
 import { navigate, routeHash } from '../lib/route';
 import { toast } from '../lib/toast';
 import { Sheet, SheetClose } from './Sheet';
@@ -26,6 +27,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
   const feeds = useFeeds().data ?? [];
   const { subscribe } = useActions();
   const qc = useQueryClient();
+  const online = useOnline();
 
   const [url, setUrl] = useState('');
   const [category, setCategory] = useState('');
@@ -49,6 +51,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const address = url.trim();
+    if (!online) return setError('You’re offline. Adding a feed needs a connection to your server.');
     if (!address) return setError('Enter the feed’s address.');
     if (category === NEW && !newTitle.trim()) return setError('Give the new category a name.');
     setBusy(true);

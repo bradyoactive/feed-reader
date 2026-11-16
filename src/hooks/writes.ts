@@ -1,4 +1,4 @@
-import { onlineManager, type InfiniteData, type Mutation, type QueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutationState, type InfiniteData, type Mutation, type QueryClient } from '@tanstack/react-query';
 import type { Backend, Entry, EntryPage, EntryRef } from '../api/types';
 import { describeError, isNetworkError } from '../api/types';
 import { tally } from '../lib/collections';
@@ -140,4 +140,13 @@ export function writesSettled(qc: QueryClient): Promise<void> {
     unsubscribe.push(qc.getMutationCache().subscribe(check), onlineManager.subscribe(check));
     check();
   });
+}
+
+/** How many articles have changes waiting to reach the server. */
+export function usePendingCount(): number {
+  const sizes = useMutationState({
+    filters: { mutationKey: WRITE, status: 'pending' },
+    select: (m) => (m.state.variables as Write | undefined)?.entries.length ?? 0,
+  });
+  return sizes.reduce((a, b) => a + b, 0);
 }

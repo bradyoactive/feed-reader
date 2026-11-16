@@ -108,6 +108,7 @@ export function describeError(err: unknown): string {
   if (err instanceof AuthError) return err.message;
   if (err instanceof HttpError) return `The server answered ${err.status}: ${err.message}`;
   if (isNetworkError(err)) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return 'You’re offline. Showing what’s saved on this device.';
     return 'Could not reach the server. Check the URL, and that the server allows cross-origin requests from this site.';
   }
   return err instanceof Error ? err.message : String(err);

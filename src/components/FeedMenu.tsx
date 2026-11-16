@@ -9,7 +9,18 @@ import { useStarredCounts, useTotalCounts } from '../hooks/data';
  * A feed's menu: right-click (mouse) or long-press (touch) on `children`, which must be a single element
  * that takes a ref (it becomes the trigger, and gets data-state="open" while the menu is open).
  */
-export function FeedMenu({ feed, onUnsubscribe, children }: { feed: Feed; onUnsubscribe(feed: Feed): void; children: ReactNode }) {
+export function FeedMenu({
+  feed,
+  onUnsubscribe,
+  disabled,
+  children,
+}: {
+  feed: Feed;
+  onUnsubscribe(feed: Feed): void;
+  /** Offline: unsubscribing needs the server, so the item is shown but can't be picked. */
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
@@ -20,11 +31,12 @@ export function FeedMenu({ feed, onUnsubscribe, children }: { feed: Feed; onUnsu
           className="z-50 w-[230px] rounded-[10px] border border-border bg-bg p-[5px] shadow-[0_12px_32px_rgb(0_0_0/0.18)]"
         >
           <ContextMenu.Item
+            disabled={disabled}
             onSelect={() => onUnsubscribe(feed)}
-            className="flex h-9 w-full cursor-default items-center gap-2.5 rounded-[7px] px-2.5 text-sm font-medium text-err-fg outline-none data-[highlighted]:bg-seg-bg"
+            className="flex h-9 w-full cursor-default items-center gap-2.5 rounded-[7px] px-2.5 text-sm font-medium text-err-fg outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-seg-bg"
           >
             <CircleMinus size={16} aria-hidden />
-            Unsubscribe…
+            {disabled ? 'Unsubscribe (needs a connection)' : 'Unsubscribe…'}
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>

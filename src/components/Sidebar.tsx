@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
+import { ChevronRight, CloudOff, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
 import { connectionLabel } from '../api';
 import type { Feed, Filter, Scope } from '../api/types';
 import { useActions, useSidebarCounts, useSidebarModel, useSyncState } from '../hooks/data';
 import { useVisitMemory } from '../hooks/visit';
+import { usePendingCount } from '../hooks/writes';
+import { offlineLabel, useOnline } from '../lib/network';
 import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
@@ -90,8 +92,9 @@ interface FeedRowProps {
 
 /** A feed in the sidebar. Right-click or long-press opens its menu. */
 function FeedRow({ feed, href, selected, confirming, count, touch, onPick, onUnsubscribe }: FeedRowProps) {
+  const online = useOnline();
   return (
-    <FeedMenu feed={feed} onUnsubscribe={onUnsubscribe}>
+    <FeedMenu feed={feed} onUnsubscribe={onUnsubscribe} disabled={!online}>
       <a
         href={href}
         onClick={() => onPick?.()}
@@ -119,6 +122,14 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   // Shared by every sidebar (desktop and the phone drawer), and covers the initial load too.
   const { last, syncing } = useSyncState();
   const synced = useRelativeTime(last);
+  const online = useOnline();
+  const pending = usePendingCount();
+  const waiting = pending ? `, ${pending} change${pending === 1 ? '' : 's'} waiting to be sent` : '';
+  const syncLabel = syncing
+    ? 'Syncing'
+    : online
+      ? `Sync with server (last synced ${synced}${waiting})`
+      : `${offlineLabel() === 'offline' ? 'Offline' : 'Can’t reach your server'}: showing what’s saved on this device${waiting}. Last synced ${synced}. Press to try again`;
   const account = connectionLabel(connection);
 
   // Reveal the selected feed when something else (e.g. mark-all-read advancing) selects it.
@@ -263,10 +274,11 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
       <div className="@container -mx-3 flex flex-none items-center gap-1 border-t border-border px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] md:py-2.5">
         <button
           onClick={() => setAdding(true)}
+          disabled={!online}
           aria-label="Add feed"
-          title="Add a feed"
+          title={online ? 'Add a feed' : 'Adding a feed needs a connection to your server'}
           className={`flex ${touch ? 'h-11 min-w-11' : 'h-[38px] min-w-[38px]'} flex-none items-center justify-center gap-2 rounded-lg px-2.5 text-[13.5px] font-semibold ${
-            adding ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
+            adding ? 'bg-sel-bg text-sel-fg' : 'text-text enabled:hover:bg-seg-bg disabled:opacity-40'
           }`}
         >
           <Plus size={18} strokeWidth={2.2} aria-hidden />
@@ -275,14 +287,23 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         </button>
         {/* Sync, with when it last happened. */}
         <button
-          aria-label={syncing ? 'Syncing' : `Sync with server, last synced ${synced}`}
-          title={syncing ? 'Syncing…' : `Sync with server (last synced ${synced})`}
+          aria-label={syncLabel}
+          title={syncLabel}
           disabled={syncing}
           onClick={() => void sync()}
           className={`ml-auto flex ${touch ? 'h-11' : 'h-[38px]'} flex-none items-center gap-1.5 rounded-lg px-2.5 text-xs whitespace-nowrap text-muted2 hover:bg-seg-bg`}
         >
-          <RefreshCw size={18} aria-hidden className={syncing ? 'animate-spin' : ''} />
-          {syncing ? 'syncing…' : synced}
+          {online || syncing ? (
+            <RefreshCw size={18} aria-hidden className={syncing ? 'animate-spin' : ''} />
+          ) : (
+            <CloudOff size={18} aria-hidden />
+          )}
+          {syncing ? 'syncing…' : online ? synced : 'offline'}
+          {pending > 0 && !syncing && (
+            <span aria-hidden className="rounded-full bg-seg-bg px-1.5 py-px text-[11px] font-semibold text-muted2">
+              {pending}
+            </span>
+          )}
         </button>
         <ThemeButton size={touch ? 44 : 38} />
       </div>
