@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
 import { CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Entry, Filter, Scope } from '../api/types';
@@ -22,6 +21,7 @@ import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } f
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
 import { ArticleList } from './ArticleList';
 import { clampSidebar, Resizer, SIDEBAR_DEFAULT } from './Resizer';
+import { Sheet } from './Sheet';
 import { Sidebar } from './Sidebar';
 
 const FILTERS: { id: Filter; label: string; Icon: LucideIcon }[] = [
@@ -369,20 +369,20 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
         </nav>
       </main>
 
-      <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay ref={scrimRef} className="fixed inset-0 z-30 bg-scrim md:hidden" style={drawerDragging ? { opacity: 0 } : undefined} />
-          <Dialog.Content
-            ref={drawerCallbackRef}
-            aria-describedby={undefined}
-            style={drawerDragging ? { transform: 'translateX(-100%)' } : undefined}
-            className="fixed inset-y-0 left-0 z-40 w-[312px] max-w-[85vw] bg-side shadow-2xl focus:outline-none md:hidden"
-          >
-            <Dialog.Title className="sr-only">Feeds</Dialog.Title>
-            <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={closeDrawer} />
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      <Sheet
+        side="left"
+        title="Feeds"
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        ref={drawerCallbackRef}
+        overlayRef={scrimRef}
+        className="md:hidden"
+        overlayClassName="md:hidden"
+        style={drawerDragging ? { transform: 'translateX(-100%)' } : undefined}
+        overlayStyle={drawerDragging ? { opacity: 0 } : undefined}
+      >
+        <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={closeDrawer} />
+      </Sheet>
     </div>
   );
 }
