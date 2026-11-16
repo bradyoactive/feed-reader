@@ -108,7 +108,7 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
 
         {notice && <Notice tone="error">{notice}</Notice>}
 
-        <form onSubmit={submit} className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-bg p-7">
+        <form onSubmit={submit} noValidate className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-bg p-7">
           <fieldset className="flex flex-col gap-2">
             <legend className="pb-2 text-[13px] font-semibold">API type</legend>
             <div className="grid grid-cols-2 gap-2">

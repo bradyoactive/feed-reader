@@ -76,7 +76,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
       title="Add a feed"
       className="px-[18px] md:inset-x-auto md:top-[140px] md:bottom-auto md:left-1/2 md:w-[460px] md:max-w-[calc(100%-32px)] md:-translate-x-1/2 md:rounded-2xl md:p-6"
     >
-      <form onSubmit={submit} className="mt-4 flex flex-col gap-4 md:mt-[18px] md:gap-[18px]">
+      <form onSubmit={submit} noValidate className="mt-4 flex flex-col gap-4 md:mt-[18px] md:gap-[18px]">
         <Field id="feed-url" label="Feed address">
           <input
             id="feed-url"
