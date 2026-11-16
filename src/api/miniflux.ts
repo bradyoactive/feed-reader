@@ -1,11 +1,9 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Filter, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Filter, Scope } from './types';
 
 const PAGE_SIZE = 50;
-/** Past this many changes, a full reload is cheaper than an incremental sync. */
-const MAX_CHANGES = 1000;
 
 export type MinifluxAuth = { type: 'token'; token: string } | { type: 'basic'; username: string; password: string };
 
@@ -187,44 +185,6 @@ export class MinifluxBackend implements Backend {
     const ids = [...(last === second ? seen : []), ...shown.filter((e) => secondOf(e) === last).map((e) => String(e.id))].join(',');
     // A whole page from one second: it may hold more than a page, which date paging can't get past.
     return { entries, nextCursor: secondOf(raw[0]) === last ? `c:${last}::${ids}` : `d:${last}:${ids}` };
-  }
-
-  async getChanges(since: number): Promise<Changes> {
-    // changed_after covers new entries and read/unread changes (both move changed_at).
-    const entries: Entry[] = [];
-    let truncated = true;
-    for (let offset = 0; offset < MAX_CHANGES; ) {
-      const params = new URLSearchParams({
-        changed_after: String(Math.floor(since / 1000)),
-        order: 'id',
-        direction: 'asc',
-        limit: '250',
-        offset: String(offset),
-      });
-      const page = await this.call<MfEntries>(`/v1/entries?${params}`);
-      const list = page.entries ?? [];
-      entries.push(...list.map(toEntry));
-      offset += list.length;
-      if (list.length === 0 || offset >= page.total) {
-        truncated = false;
-        break;
-      }
-    }
-    // Starring doesn't move changed_at, so take the full starred list (usually short).
-    const starredIds = new Set<string>();
-    let starredComplete = false;
-    for (let offset = 0; offset < MAX_CHANGES; ) {
-      const page = await this.call<MfEntries>(`/v1/entries?starred=true&limit=250&offset=${offset}`);
-      const list = page.entries ?? [];
-      list.forEach((e) => starredIds.add(String(e.id)));
-      offset += list.length;
-      if (list.length === 0 || offset >= page.total) {
-        starredComplete = true;
-        break;
-      }
-    }
-    // A partial list can't say what was unstarred, so only pass it on when it's complete.
-    return { entries, starredIds: starredComplete ? starredIds : undefined, truncated };
   }
 
   async subscribe(url: string, category: CategoryChoice): Promise<string> {

@@ -136,24 +136,6 @@ describe('miniflux', () => {
     expect(await new MinifluxBackend(config).getTotalCounts()).toEqual({ '1': 12, '2': 3, '3': 4 });
   });
 
-  it('syncs entries changed since a time, plus the full starred list', async () => {
-    const urls: URL[] = [];
-    mockFetch((url) => {
-      urls.push(url);
-      if (url.searchParams.get('starred') === 'true') return { total: 1, entries: [entry(9, '2026-11-01T00:00:00Z', { starred: true })] };
-      return { total: 2, entries: [entry(1, '2026-11-11T10:00:00Z'), entry(2, '2026-11-11T11:00:00Z', { status: 'read' })] };
-    });
-    const changes = await new MinifluxBackend(config).getChanges(1_800_000_000_500);
-    expect(urls[0].searchParams.get('changed_after')).toBe('1800000000');
-    expect(changes.entries.map((e) => [e.id, e.read])).toEqual([
-      ['1', false],
-      ['2', true],
-    ]);
-    expect([...changes.starredIds!]).toEqual(['9']);
-    expect(changes.unreadIds).toBeUndefined();
-    expect(changes.truncated).toBe(false);
-  });
-
   it('subscribes into a new category, then creates the feed', async () => {
     const calls: { path: string; method?: string; body?: unknown }[] = [];
     mockFetch((url, init) => {

@@ -1,4 +1,4 @@
-import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -135,21 +135,25 @@ export class DemoBackend implements Backend {
 
   async getUnreadCounts() {
     await wait(80);
+    this.arrive();
     return this.countBy((e) => !e.read);
   }
 
   async getTotalCounts() {
     await wait(80);
+    this.arrive();
     return this.countBy(() => true);
   }
 
   async getStarredCounts() {
     await wait(80);
+    this.arrive();
     return this.countBy((e) => e.starred);
   }
 
   async getEntries({ filter, cursor, feedIds }: EntryQuery): Promise<EntryPage> {
     await wait(250);
+    this.arrive();
     const start = cursor ? Number(cursor) : 0;
     const matching = this.entries.filter(
       (e) => feedIds.has(e.feedId) && (filter === 'all' || (filter === 'unread' ? !e.read : e.starred)),
@@ -182,29 +186,24 @@ export class DemoBackend implements Backend {
   }
 
   private arrivals = 0;
+  private readonly openedAt = Date.now();
 
-  /** Each sync, one new article "arrives" so the incremental sync is visible without a real server. */
-  async getChanges(since: number): Promise<Changes> {
-    await wait(200);
-    const [feedId, title, summary] = SAMPLES[this.arrivals % SAMPLES.length];
-    const fresh: Entry = {
-      id: `new${this.arrivals++}`,
-      feedId,
-      title: `New: ${title}`,
-      url: `https://example.com/new/${this.arrivals}`,
-      summary,
-      imageUrl: demoImage(this.arrivals + 3),
-      published: Math.max(Date.now(), since + 1),
-      read: false,
-      starred: false,
-    };
-    this.entries.unshift(fresh);
-    // Report the full read/starred state, the way Google Reader API servers do.
-    return {
-      entries: [{ ...fresh }],
-      unreadIds: new Set(this.entries.filter((e) => !e.read).map((e) => e.id)),
-      starredIds: new Set(this.entries.filter((e) => e.starred).map((e) => e.id)),
-      truncated: false,
-    };
+  /** A new article "arrives" every 30 seconds, so Sync has something to show without a real server. */
+  private arrive() {
+    const due = Math.floor((Date.now() - this.openedAt) / 30_000);
+    while (this.arrivals < due) {
+      const [feedId, title, summary] = SAMPLES[this.arrivals % SAMPLES.length];
+      this.entries.unshift({
+        id: `new${this.arrivals++}`,
+        feedId,
+        title: `New: ${title}`,
+        url: `https://example.com/new/${this.arrivals}`,
+        summary,
+        imageUrl: demoImage(this.arrivals + 3),
+        published: Date.now(),
+        read: false,
+        starred: false,
+      });
+    }
   }
 }

@@ -60,18 +60,6 @@ export interface EntryQuery {
 /** An existing category, or a new one to create with this title. */
 export type CategoryChoice = { id: string } | { newTitle: string };
 
-/** What changed on the server since a given time. */
-export interface Changes {
-  /** Entries added or modified since then, with their current state. */
-  entries: Entry[];
-  /** When given, the complete set of unread ids: any other entry is read. */
-  unreadIds?: Set<string>;
-  /** When given, the complete set of starred ids: any other entry is unstarred. */
-  starredIds?: Set<string>;
-  /** True when there were too many changes to list; the caller should reload everything instead. */
-  truncated: boolean;
-}
-
 export interface Backend {
   readonly kind: BackendKind;
   getCategories(): Promise<Category[]>;
@@ -95,8 +83,6 @@ export interface Backend {
    * before `before`, ms). See marksWholeScope.
    */
   markScopeRead(scope: Scope, before: number, loaded: Entry[]): Promise<void>;
-  /** New articles and read/star changes since `since` (ms), made here or on another device. */
-  getChanges(since: number): Promise<Changes>;
   /** Subscribes to a feed address in a category. Returns the new feed's id. */
   subscribe(url: string, category: CategoryChoice): Promise<string>;
   /** Removes a feed. The server deletes its articles too. */

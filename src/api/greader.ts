@@ -1,13 +1,9 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, readableError, request } from './http';
 import { AuthError, HttpError, UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
 
 const PAGE_SIZE = 50;
-/** Past this many new articles, a full reload is cheaper than an incremental sync. */
-const MAX_CHANGES = 1000;
-/** Largest unread/starred id list we'll download to compare states. */
-const MAX_IDS = 20000;
 const READING_LIST = 'user/-/state/com.google/reading-list';
 const READ = 'user/-/state/com.google/read';
 const STARRED = 'user/-/state/com.google/starred';
@@ -266,44 +262,6 @@ export class GReaderBackend implements Backend {
       if (!c || entries.length > 0) break;
     }
     return { entries, nextCursor: c };
-  }
-
-  /** All item ids in a stream, or undefined if there are more than we're willing to list. */
-  private async itemIds(params: Record<string, string>): Promise<Set<string> | undefined> {
-    const r = await this.get<{ itemRefs?: { id: string }[] }>('/reader/api/0/stream/items/ids', {
-      ...params,
-      n: String(MAX_IDS),
-    });
-    const refs = r.itemRefs ?? [];
-    return refs.length >= MAX_IDS ? undefined : new Set(refs.map((x) => normalizeItemId(x.id)));
-  }
-
-  async getChanges(since: number): Promise<Changes> {
-    // New articles: everything in the reading list newer than the last sync (`ot`, in seconds).
-    const entries: Entry[] = [];
-    let c: string | undefined;
-    let truncated = true;
-    for (let i = 0; i < MAX_CHANGES / 250; i++) {
-      const page = await this.get<GrStream>('/reader/api/0/stream/contents', {
-        s: READING_LIST,
-        ot: String(Math.floor(since / 1000)),
-        n: '250',
-        ...(c ? { c } : {}),
-      });
-      entries.push(...(page.items ?? []).map(toEntry));
-      c = page.continuation;
-      if (!c) {
-        truncated = false;
-        break;
-      }
-    }
-    // Read/star changes: the API can't list "what changed", so take the full unread and starred id
-    // lists (ids only, so cheap) and let the caller compare them with what it has.
-    const [unreadIds, starredIds] = await Promise.all([
-      this.itemIds({ s: READING_LIST, xt: READ }),
-      this.itemIds({ s: STARRED }),
-    ]);
-    return { entries, unreadIds, starredIds, truncated };
   }
 
   async setRead(entries: Entry[], read: boolean): Promise<void> {

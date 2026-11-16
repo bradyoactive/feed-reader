@@ -129,28 +129,6 @@ describe('greader', () => {
     expect(normalizeItemId('1731500000123456')).toBe(`tag:google.com,2005:reader/item/${(1731500000123456n).toString(16).padStart(16, '0')}`);
   });
 
-  it('syncs new items with ot, and full unread/starred id lists', async () => {
-    const urls: URL[] = [];
-    mockFetch((url) => {
-      urls.push(url);
-      if (url.pathname.endsWith('/stream/items/ids')) {
-        const starred = url.searchParams.get('s') === 'user/-/state/com.google/starred';
-        return json({ itemRefs: starred ? [{ id: '2' }] : [{ id: '1' }, { id: '3' }] });
-      }
-      return json({ items: [item(3)] });
-    });
-    const changes = await new GReaderBackend(config).getChanges(1_800_000_000_900);
-    const contents = urls.find((u) => u.pathname.endsWith('/stream/contents'))!;
-    expect(contents.searchParams.get('ot')).toBe('1800000000');
-    expect(contents.searchParams.get('s')).toBe('user/-/state/com.google/reading-list');
-    const unreadReq = urls.find((u) => u.pathname.endsWith('/items/ids') && u.searchParams.get('xt'))!;
-    expect(unreadReq.searchParams.get('xt')).toBe('user/-/state/com.google/read');
-    expect(changes.entries).toHaveLength(1);
-    expect([...changes.unreadIds!]).toEqual([normalizeItemId('1'), normalizeItemId('3')]);
-    expect([...changes.starredIds!]).toEqual([normalizeItemId('2')]);
-    expect(changes.truncated).toBe(false);
-  });
-
   it('subscribes with quickadd, then files the feed under its category', async () => {
     const posts: { path: string; body: URLSearchParams }[] = [];
     mockFetch((url, init) => {

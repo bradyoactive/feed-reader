@@ -61,8 +61,10 @@ To redraw the icons after changing `public/logo.svg`, run `npm run icons`.
 
 Behaviour worth knowing:
 
-- Lists are snapshots: items you mark read stay visible (dimmed) until you change view or refresh, so nothing jumps
+- Lists are snapshots: items you mark read stay visible (dimmed) until you change view or sync, so nothing jumps
   under the cursor. The sidebar keeps feeds listed for the same reason.
+- **Sync** waits for your changes to reach the server, then reloads everything from it: counts, feeds and the lists
+  on screen (every page you've loaded). Nothing reloads on its own; your server fetches feeds on its own schedule.
 - **Read above / below** act on the articles loaded in the current view, in on-screen order.
 - **Mark all read** marks the feed, category or everything read, up to when the list was loaded (on Miniflux, just the
   articles loaded in Skim; anything further down stays unread), then moves to the next feed or
