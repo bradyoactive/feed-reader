@@ -10,7 +10,7 @@ function useFeedIconUrl(feed: Feed | undefined): string | null {
   const iconId = feed && !feed.iconUrl ? feed.iconId : undefined;
   const fetched = useQuery({
     queryKey: ['feedIcon', iconId],
-    queryFn: () => b.getFeedIcon!(iconId!, feed!.id),
+    queryFn: () => b.getFeedIcon!(iconId!),
     enabled: !!iconId && !!b.getFeedIcon,
     staleTime: Infinity,
     gcTime: Infinity,

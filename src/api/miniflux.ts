@@ -97,17 +97,11 @@ export class MinifluxBackend implements Backend {
     }));
   }
 
-  async getFeedIcon(iconId: string, feedId: string): Promise<string | null> {
+  async getFeedIcon(iconId: string): Promise<string | null> {
     const key = `skim.icon.${this.config.url}|${iconId}`;
     const cached = readIconCache(key);
     if (cached !== undefined) return cached;
-    let icon: { data?: string } | null;
-    try {
-      icon = await this.call<{ data?: string }>(`/v1/icons/${iconId}`);
-    } catch {
-      // Miniflux before 2.0.49 only has the per-feed endpoint.
-      icon = await this.call<{ data?: string }>(`/v1/feeds/${feedId}/icon`).catch(() => null);
-    }
+    const icon = await this.call<{ data?: string }>(`/v1/icons/${iconId}`);
     // `data` is "image/png;base64,…", a data: URL without its scheme.
     const url = icon?.data ? (icon.data.startsWith('data:') ? icon.data : `data:${icon.data}`) : null;
     writeIconCache(key, url);

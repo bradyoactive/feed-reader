@@ -94,7 +94,7 @@ export interface Backend {
   /** Removes a feed. The server deletes its articles too. */
   unsubscribe(feedId: string): Promise<void>;
   /** The icon for a feed's `iconId`, as a data: URL, or null if the server has none. */
-  getFeedIcon?(iconId: string, feedId: string): Promise<string | null>;
+  getFeedIcon?(iconId: string): Promise<string | null>;
 }
 
 export class AuthError extends Error {

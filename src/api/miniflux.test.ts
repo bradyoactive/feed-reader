@@ -181,15 +181,16 @@ describe('miniflux', () => {
     const b = new MinifluxBackend(config);
     const feeds = await b.getFeeds();
     expect(feeds.map((x) => x.iconId)).toEqual(['501', undefined]);
-    expect(await b.getFeedIcon('501', '3')).toBe('data:image/png;base64,AAAA');
+    expect(await b.getFeedIcon('501')).toBe('data:image/png;base64,AAAA');
     expect(String(f.mock.calls[1][0])).toBe('https://rss.test/v1/icons/501');
-    expect(await b.getFeedIcon('501', '3')).toBe('data:image/png;base64,AAAA');
+    expect(await b.getFeedIcon('501')).toBe('data:image/png;base64,AAAA');
     expect(f).toHaveBeenCalledTimes(2);
   });
 
-  it('falls back to the per-feed icon endpoint on older servers', async () => {
-    mockFetch((url) => (url.pathname.startsWith('/v1/icons/') ? new Response('Not found', { status: 404 }) : { data: 'image/x-icon;base64,BBBB' }));
-    expect(await new MinifluxBackend(config).getFeedIcon('777', '9')).toBe('data:image/x-icon;base64,BBBB');
+  it('doesn’t remember a failed icon fetch, so it’s tried again next time', async () => {
+    mockFetch(() => new Response('Bad gateway', { status: 502 }));
+    await expect(new MinifluxBackend(config).getFeedIcon('777')).rejects.toThrow();
+    expect(localStorage.getItem('skim.icon.https://rss.test/|777')).toBeNull();
   });
 
   it('unsubscribes with DELETE', async () => {
