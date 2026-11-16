@@ -1,7 +1,7 @@
 import { firstImage, htmlToText, safeUrl } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Changes, Entry, EntryPage, EntryQuery, Feed, Filter, Scope } from './types';
 
 const PAGE_SIZE = 50;
 /** Past this many changes, a full reload is cheaper than an incremental sync. */
@@ -139,41 +139,59 @@ export class MinifluxBackend implements Backend {
     }
   }
 
+  /**
+   * Newest first by published date. A date cursor (not an offset) keeps paging stable while items are
+   * marked read. Miniflux sorts on one column with no tie-breaker and its date filters are whole
+   * seconds, so the cursor works per second and has two forms (seconds are unix time):
+   *   d:<second>:<ids>       carry on from that second, skipping the ids in it already shown
+   *   c:<second>:<id>:<ids>  that second holds more than a page, so page through it by id (below <id>),
+   *                          skipping the ids shown before the catch-up started; then carry on before it
+   */
   async getEntries({ scope, filter, cursor }: EntryQuery): Promise<EntryPage> {
-    const params = new URLSearchParams({
-      limit: String(PAGE_SIZE),
-      order: 'published_at',
-      direction: 'desc',
-    });
+    // A page can come back with nothing new (all already shown); keep going so the list never stalls.
+    for (let i = 0; i < 10; i++) {
+      const page = await this.entryPage(scope, filter, cursor);
+      if (page.entries.length > 0 || !page.nextCursor) return page;
+      cursor = page.nextCursor;
+    }
+    return { entries: [], nextCursor: cursor };
+  }
+
+  private async entryPage(scope: Scope, filter: Filter, cursor: string | undefined): Promise<EntryPage> {
+    const [mode, sec, ...rest] = cursor?.split(':') ?? [];
+    const second = Number(sec);
+    const catchUp = mode === 'c';
+    const belowId = catchUp ? rest[0] : undefined;
+    const seen = new Set((catchUp ? rest[1] : rest[0])?.split(',').filter(Boolean));
+
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), order: catchUp ? 'id' : 'published_at', direction: 'desc' });
     if (filter === 'unread') params.set('status', 'unread');
     if (filter === 'starred') params.set('starred', 'true');
     if (scope.kind === 'category') params.set('category_id', scope.id);
-
-    // Cursor = "<published unix seconds>:<comma-separated ids already seen at that second>".
-    // A timestamp cursor (not offset) keeps paging stable while items are marked read.
-    const seen = new Set<string>();
-    if (cursor) {
-      const [ts, ids] = cursor.split(':');
-      params.set('before', String(Number(ts) + 1));
-      ids?.split(',').forEach((id) => id && seen.add(id));
+    if (cursor) params.set('before', String(second + 1));
+    if (catchUp) {
+      // `after` is exclusive and whole seconds, so this also takes the end of the second before; dropped below.
+      params.set('after', String(second - 1));
+      if (belowId) params.set('before_entry_id', belowId);
     }
 
     const path = scope.kind === 'feed' ? `/v1/feeds/${scope.id}/entries` : '/v1/entries';
-    const page = await this.call<MfEntries>(`${path}?${params}`);
-    const raw = (page.entries ?? []).filter((e) => !seen.has(String(e.id)));
-    const entries = raw.map(toEntry);
+    const raw = (await this.call<MfEntries>(`${path}?${params}`)).entries ?? [];
+    const secondOf = (e: MfEntry) => Math.floor(Date.parse(e.published_at) / 1000);
+    const shown = raw.filter((e) => !seen.has(String(e.id)) && (!catchUp || secondOf(e) === second));
+    const entries = shown.map(toEntry);
+    const full = raw.length === PAGE_SIZE;
 
-    let nextCursor: string | undefined;
-    if ((page.entries ?? []).length === PAGE_SIZE && entries.length > 0) {
-      const last = raw[raw.length - 1];
-      const lastTs = Math.floor(Date.parse(last.published_at) / 1000);
-      const sameSecond = raw
-        .filter((e) => Math.floor(Date.parse(e.published_at) / 1000) === lastTs)
-        .map((e) => e.id);
-      const carried = cursor && cursor.startsWith(`${lastTs}:`) ? [...seen] : [];
-      nextCursor = `${lastTs}:${[...carried, ...sameSecond].join(',')}`;
+    if (catchUp) {
+      // Through that second by id; once it's done, everything older than it.
+      return { entries, nextCursor: full ? `c:${second}:${raw[raw.length - 1].id}:${[...seen].join(',')}` : `d:${second - 1}:` };
     }
-    return { entries, nextCursor };
+    if (!full) return { entries, nextCursor: undefined };
+    const last = secondOf(raw[raw.length - 1]);
+    // Ids shown so far from the page's last second, including earlier pages' when it's the same second.
+    const ids = [...(last === second ? seen : []), ...shown.filter((e) => secondOf(e) === last).map((e) => String(e.id))].join(',');
+    // A whole page from one second: it may hold more than a page, which date paging can't get past.
+    return { entries, nextCursor: secondOf(raw[0]) === last ? `c:${last}::${ids}` : `d:${last}:${ids}` };
   }
 
   async getChanges(since: number): Promise<Changes> {

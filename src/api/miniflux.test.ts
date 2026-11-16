@@ -52,27 +52,74 @@ describe('miniflux', () => {
     expect(e.imageUrl).toBe('https://cdn.test/a.png');
   });
 
-  it('pages with a timestamp cursor and skips ids already seen', async () => {
-    const page1 = Array.from({ length: 50 }, (_, i) => entry(100 - i, new Date(Date.UTC(2026, 10, 11, 12, 0, 50 - i)).toISOString()));
-    // Last entry of page 1 published at second 1; a second entry shares that second.
-    const page2 = [entry(49, page1[49].published_at), entry(48, '2026-11-11T11:00:00Z')];
+  /**
+   * A fake Miniflux list endpoint: whole-second `before`/`after` on published_at, `before_entry_id`,
+   * and a single sort column with no tie-breaker (ties come back in a different order on every request).
+   */
+  function fakeServer(all: ReturnType<typeof entry>[]) {
     const urls: URL[] = [];
+    let request = 0;
     mockFetch((url) => {
       urls.push(url);
-      return url.searchParams.has('before') ? { total: 99, entries: [page1[49], ...page2] } : { total: 99, entries: page1 };
+      const p = url.searchParams;
+      const ms = (e: { published_at: string }) => Date.parse(e.published_at);
+      const salt = request++;
+      const list = all
+        .filter((e) => !p.has('before') || ms(e) < Number(p.get('before')) * 1000)
+        .filter((e) => !p.has('after') || ms(e) > Number(p.get('after')) * 1000)
+        .filter((e) => !p.has('before_entry_id') || e.id < Number(p.get('before_entry_id')))
+        .sort((a, b) => (p.get('order') === 'id' ? b.id - a.id : ms(b) - ms(a) || ((a.id * 7 + salt) % 11) - ((b.id * 7 + salt) % 11)));
+      return { total: list.length, entries: list.slice(0, Number(p.get('limit'))) };
     });
-    const b = new MinifluxBackend(config);
-    const first = await b.getEntries({ scope: { kind: 'category', id: '9' }, filter: 'unread', feedIds: new Set() });
+    return urls;
+  }
+
+  async function pageAll(b: MinifluxBackend) {
+    const q = { scope: { kind: 'category', id: '9' } as const, filter: 'unread' as const, feedIds: new Set<string>() };
+    const pages: string[][] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await b.getEntries({ ...q, cursor });
+      pages.push(page.entries.map((e) => e.id));
+      cursor = page.nextCursor;
+    } while (cursor && pages.length < 50);
+    return pages;
+  }
+
+  const at = (sec: number, ms = 0) => new Date(Date.UTC(2026, 10, 11, 12, 0, 0) + sec * 1000 + ms).toISOString();
+
+  it('pages newest first by date, skipping ids already shown in a second cut by the page boundary', async () => {
+    // 45 entries a second apart, then 10 sharing one second: the first page ends inside it.
+    const all = [...Array.from({ length: 45 }, (_, i) => entry(1000 + i, at(100 - i))), ...Array.from({ length: 10 }, (_, i) => entry(500 + i, at(50)))];
+    const urls = fakeServer(all);
+    const pages = await pageAll(new MinifluxBackend(config));
     expect(urls[0].pathname).toBe('/v1/entries');
+    expect(urls[0].searchParams.get('order')).toBe('published_at');
     expect(urls[0].searchParams.get('status')).toBe('unread');
     expect(urls[0].searchParams.get('category_id')).toBe('9');
-    expect(first.entries).toHaveLength(50);
-    expect(first.nextCursor).toBeDefined();
+    expect(pages.map((p) => p.length)).toEqual([50, 5]);
+    expect(new Set(pages.flat()).size).toBe(55);
+  });
 
-    const second = await b.getEntries({ scope: { kind: 'category', id: '9' }, filter: 'unread', cursor: first.nextCursor, feedIds: new Set() });
-    expect(urls[1].searchParams.get('before')).toBe(String(Date.parse(page1[49].published_at) / 1000 + 1));
-    expect(second.entries.map((e) => e.id)).toEqual(['49', '48']);
-    expect(second.nextCursor).toBeUndefined();
+  it('catches up on a second holding more than a page, then carries on in date order', async () => {
+    const all = [
+      ...Array.from({ length: 30 }, (_, i) => entry(2000 + i, at(500 - i))), // newer, one per second
+      ...Array.from({ length: 120 }, (_, i) => entry(1000 + i, at(200, (i * 7) % 1000))), // one busy second
+      ...Array.from({ length: 5 }, (_, i) => entry(3000 + i, at(199, 500 + i))), // end of the second before it
+      ...Array.from({ length: 30 }, (_, i) => entry(100 + i, at(100 - i))), // older
+    ];
+    const urls = fakeServer(all);
+    const pages = await pageAll(new MinifluxBackend(config));
+    const ids = pages.flat();
+    expect(ids).toHaveLength(all.length);
+    expect(new Set(ids).size).toBe(all.length);
+    // Newest to oldest by the second (order within the busy second is the server's).
+    const secondOf = (id: string) => Math.floor(Date.parse(all.find((e) => String(e.id) === id)!.published_at) / 1000);
+    const seconds = ids.map(secondOf);
+    expect(seconds).toEqual([...seconds].sort((a, b) => b - a));
+    // The catch-up pages by id within that second.
+    expect(urls.some((u) => u.searchParams.get('order') === 'id' && u.searchParams.has('after'))).toBe(true);
+    expect(pages.every((p) => p.length > 0)).toBe(true);
   });
 
   it('uses the feed endpoint and starred flag', async () => {
