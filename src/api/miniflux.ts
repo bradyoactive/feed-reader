@@ -1,4 +1,4 @@
-import { firstImage, htmlToText, safeUrl } from '../lib/html';
+import { parseArticle } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Filter, Scope } from './types';
@@ -53,14 +53,10 @@ export async function minifluxLogin(url: string, auth: MinifluxAuth): Promise<nu
 }
 
 export function toEntry(e: MfEntry): Entry {
-  const image = e.enclosures?.find((x) => x.mime_type?.startsWith('image/'))?.url;
   return {
     id: String(e.id),
     feedId: String(e.feed_id),
-    title: e.title || '(untitled)',
-    url: safeUrl(e.url) ?? '',
-    summary: htmlToText(e.content),
-    imageUrl: safeUrl(image, e.url) ?? firstImage(e.content, e.url),
+    ...parseArticle({ title: e.title, html: e.content, url: e.url, image: e.enclosures?.find((x) => x.mime_type?.startsWith('image/'))?.url }),
     published: Date.parse(e.published_at),
     read: e.status === 'read',
     starred: e.starred,

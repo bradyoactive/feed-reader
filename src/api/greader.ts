@@ -1,4 +1,4 @@
-import { firstImage, htmlToText, safeUrl } from '../lib/html';
+import { parseArticle, safeUrl } from '../lib/html';
 import { joinUrl, readableError, request } from './http';
 import { AuthError, HttpError, UNCATEGORIZED } from './types';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
@@ -66,9 +66,6 @@ export function normalizeItemId(id: string): string {
 }
 
 export function toEntry(item: GrItem): Entry {
-  const html = item.content?.content ?? item.summary?.content ?? '';
-  const url = item.canonical?.[0]?.href ?? item.alternate?.[0]?.href ?? '';
-  const image = item.enclosure?.find((e) => e.type?.startsWith('image/'))?.href;
   const published =
     item.published != null
       ? item.published * 1000
@@ -76,10 +73,12 @@ export function toEntry(item: GrItem): Entry {
   return {
     id: normalizeItemId(item.id),
     feedId: item.origin?.streamId ?? '',
-    title: item.title || '(untitled)',
-    url: safeUrl(url) ?? '',
-    summary: htmlToText(html),
-    imageUrl: safeUrl(image, url) ?? firstImage(html, url),
+    ...parseArticle({
+      title: item.title,
+      html: item.content?.content ?? item.summary?.content,
+      url: item.canonical?.[0]?.href ?? item.alternate?.[0]?.href,
+      image: item.enclosure?.find((e) => e.type?.startsWith('image/'))?.href,
+    }),
     published,
     read: item.categories?.includes(READ) ?? false,
     starred: item.categories?.includes(STARRED) ?? false,

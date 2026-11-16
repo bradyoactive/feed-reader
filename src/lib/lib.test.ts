@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Entry } from '../api/types';
 import { dayLabel, groupByDay } from './dates';
-import { firstImage, htmlToText, safeUrl } from './html';
+import { parseArticle, safeUrl } from './html';
 import { parseHash, routeHash, scopeExists, setRouteNames, slugify } from './route';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -37,12 +37,22 @@ describe('groupByDay', () => {
 
 describe('html helpers', () => {
   it('strips markup and scripts', () => {
-    expect(htmlToText('<p>Hi&nbsp;<b>there</b></p><script>alert(1)</script>')).toBe('Hi there');
+    expect(parseArticle({ html: '<p>Hi&nbsp;<b>there</b></p><script>alert(1)</script>' }).summary).toBe('Hi there');
   });
 
   it('skips tiny tracking images and resolves relative URLs', () => {
     const html = '<img src="https://t.test/pixel.gif" width="1" height="1"><img src="img/a.jpg">';
-    expect(firstImage(html, 'https://site.test/post/')).toBe('https://site.test/post/img/a.jpg');
+    expect(parseArticle({ html, url: 'https://site.test/post/' }).imageUrl).toBe('https://site.test/post/img/a.jpg');
+  });
+
+  it('finds an image inside <noscript> (lazy-loading markup)', () => {
+    const html = '<img data-lazy="x"><noscript><img src="https://site.test/real.jpg"></noscript><p>Text</p>';
+    expect(parseArticle({ html })).toMatchObject({ imageUrl: 'https://site.test/real.jpg', summary: 'Text' });
+  });
+
+  it('prefers an attached image, and fills in a missing title and unsafe link', () => {
+    const a = parseArticle({ html: '<img src="https://site.test/in.jpg">', url: 'javascript:alert(1)', image: 'https://site.test/att.jpg' });
+    expect(a).toMatchObject({ title: '(untitled)', url: '', imageUrl: 'https://site.test/att.jpg' });
   });
 
   it('only allows http(s) URLs', () => {

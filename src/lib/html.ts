@@ -1,18 +1,38 @@
+import type { Entry } from '../api/types';
+
 const SUMMARY_LIMIT = 600;
 
-/** Turns article HTML into a short plain-text summary without ever inserting it into the page. */
-export function htmlToText(html: string | undefined | null): string {
-  if (!html) return '';
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+export interface ArticleSource {
+  title?: string;
+  /** The article's HTML (content, or summary when there's no content). */
+  html?: string | null;
+  url?: string;
+  /** An image the feed attached (an enclosure), preferred over one found in the HTML. */
+  image?: string;
+}
+
+/**
+ * The parts of an Entry that come from the article itself, the same for every server: a safe link, a short
+ * plain-text summary and a picture. The HTML is parsed once and never inserted into the page.
+ */
+export function parseArticle({ title, html, url, image }: ArticleSource): Pick<Entry, 'title' | 'url' | 'summary' | 'imageUrl'> {
+  const doc = html ? new DOMParser().parseFromString(html, 'text/html') : null;
+  return {
+    title: title || '(untitled)',
+    url: safeUrl(url) ?? '',
+    imageUrl: safeUrl(image, url) ?? (doc ? firstImage(doc, url) : undefined),
+    summary: doc ? summaryText(doc) : '',
+  };
+}
+
+function summaryText(doc: Document): string {
   doc.querySelectorAll('script, style, noscript, iframe, figure figcaption').forEach((n) => n.remove());
   const text = (doc.body.textContent ?? '').replace(/\s+/g, ' ').trim();
   return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT).trimEnd()}…` : text;
 }
 
-/** First usable image URL in article HTML, resolved against the article URL. */
-export function firstImage(html: string | undefined | null, baseUrl?: string): string | undefined {
-  if (!html) return undefined;
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+/** First usable image in the article, resolved against the article URL. */
+function firstImage(doc: Document, baseUrl?: string): string | undefined {
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') ?? img.getAttribute('data-src');
     if (!src || src.startsWith('data:')) continue;
