@@ -1,3 +1,4 @@
+import { tally } from '../lib/collections';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
@@ -127,9 +128,7 @@ export class DemoBackend implements Backend {
   }
 
   private countBy(pred: (e: Entry) => boolean) {
-    const counts: Record<string, number> = {};
-    for (const e of this.entries) if (pred(e)) counts[e.feedId] = (counts[e.feedId] ?? 0) + 1;
-    return counts;
+    return tally(this.entries.filter(pred), (e) => e.feedId);
   }
 
   async getUnreadCounts() {

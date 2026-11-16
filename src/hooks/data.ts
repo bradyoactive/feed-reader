@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-query';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
 import { describeError, UNCATEGORIZED } from '../api/types';
+import { tally } from '../lib/collections';
 import { scopeKey, setRouteNames } from '../lib/route';
 import { toast } from '../lib/toast';
 
@@ -133,19 +134,26 @@ export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefin
   });
 }
 
-/** Applies `fn` to every cached entry, in every list. */
-function patchEntries(qc: QueryClient, fn: (e: Entry) => Entry) {
+/** Rewrites every page of every cached article list. */
+function patchPages(qc: QueryClient, fn: (entries: Entry[]) => Entry[]) {
   qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
-    data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: p.entries.map(fn) })) },
+    data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: fn(p.entries) })) },
   );
 }
 
-function bump(qc: QueryClient, key: readonly unknown[], deltas: Counts) {
-  qc.setQueryData<Counts>(key, (old) => {
+/** Changes a copy of the cached counts under `key` (every kind of count for ['counts']), if loaded. */
+function patchCounts(qc: QueryClient, key: readonly unknown[], fn: (counts: Counts) => void) {
+  qc.setQueriesData<Counts | null>({ queryKey: key }, (old) => {
     if (!old) return old;
     const next = { ...old };
-    for (const [feed, d] of Object.entries(deltas)) next[feed] = Math.max(0, (next[feed] ?? 0) + d);
+    fn(next);
     return next;
+  });
+}
+
+function bump(qc: QueryClient, key: readonly unknown[], deltas: Counts) {
+  patchCounts(qc, key, (c) => {
+    for (const [feed, d] of Object.entries(deltas)) c[feed] = Math.max(0, (c[feed] ?? 0) + d);
   });
 }
 
@@ -207,10 +215,8 @@ export function useActions(): Actions {
       const changing = entries.filter((e) => e.read !== read);
       if (changing.length === 0) return;
       const ids = new Set(changing.map((e) => e.id));
-      const deltas: Counts = {};
-      for (const e of changing) deltas[e.feedId] = (deltas[e.feedId] ?? 0) + (read ? -1 : 1);
-      patchEntries(qc, (e) => (ids.has(e.id) ? { ...e, read } : e));
-      bump(qc, keys.unread, deltas);
+      patchPages(qc, (es) => es.map((e) => (ids.has(e.id) ? { ...e, read } : e)));
+      bump(qc, keys.unread, tally(changing, (e) => e.feedId, {}, read ? -1 : 1));
       write(() => b.setRead(changing, read));
     },
     [b, qc, write],
@@ -219,7 +225,7 @@ export function useActions(): Actions {
   const setStarred = useCallback(
     (entry: Entry, starred: boolean) => {
       if (entry.starred === starred) return;
-      patchEntries(qc, (e) => (e.id === entry.id ? { ...e, starred } : e));
+      patchPages(qc, (es) => es.map((e) => (e.id === entry.id ? { ...e, starred } : e)));
       bump(qc, keys.starred, { [entry.feedId]: starred ? 1 : -1 });
       write(() => b.setStarred(entry, starred));
     },
@@ -250,15 +256,8 @@ export function useActions(): Actions {
   const unsubscribe = useCallback(
     (feed: Feed) => {
       qc.setQueryData<Feed[]>(keys.feeds, (fs) => fs?.filter((f) => f.id !== feed.id));
-      qc.setQueriesData<Counts | null>({ queryKey: ['counts'] }, (c) => {
-        if (!c) return c;
-        const next = { ...c };
-        delete next[feed.id];
-        return next;
-      });
-      qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
-        data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: p.entries.filter((e) => e.feedId !== feed.id) })) },
-      );
+      patchCounts(qc, ['counts'], (c) => delete c[feed.id]);
+      patchPages(qc, (es) => es.filter((e) => e.feedId !== feed.id));
       b.unsubscribe(feed.id)
         .then(() => {
           toast(`Unsubscribed from ${feed.title}`);
@@ -283,14 +282,14 @@ export function useTotalCounts(enabled: boolean) {
 
 /**
  * Counts shown in the sidebar for the current filter: unread under Unread, starred under Starred,
- * everything under All. `ready` is false while loading; servers that can't report totals give no counts under All.
+ * everything under All. Empty while loading; servers that can't report totals give no counts under All.
  */
-export function useSidebarCounts(filter: Filter): { counts: Counts; ready: boolean } {
+export function useSidebarCounts(filter: Filter): Counts {
   const unread = useUnreadCounts();
   const starred = useStarredCounts(filter === 'starred');
   const total = useTotalCounts(filter === 'all');
   const q = filter === 'starred' ? starred : filter === 'all' ? total : unread;
-  return { counts: q.data ?? {}, ready: q.isSuccess };
+  return q.data ?? {};
 }
 
 export interface SidebarModel {

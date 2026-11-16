@@ -1,3 +1,4 @@
+import { chunks, tally } from '../lib/collections';
 import { parseArticle } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
@@ -116,7 +117,7 @@ export class MinifluxBackend implements Backend {
     for (;;) {
       const page = await this.call<MfEntries>(`/v1/entries?starred=true&limit=250&offset=${offset}`);
       const entries = page.entries ?? [];
-      for (const e of entries) counts[e.feed_id] = (counts[e.feed_id] ?? 0) + 1;
+      tally(entries, (e) => e.feed_id, counts);
       offset += entries.length;
       if (entries.length === 0 || offset >= page.total) return counts;
     }
@@ -198,11 +199,10 @@ export class MinifluxBackend implements Backend {
   }
 
   async setRead(entries: Entry[], read: boolean): Promise<void> {
-    // Batch to keep request bodies a sensible size.
-    for (let i = 0; i < entries.length; i += 500) {
+    for (const batch of chunks(entries, 500)) {
       await this.call('/v1/entries', {
         method: 'PUT',
-        body: JSON.stringify({ entry_ids: entries.slice(i, i + 500).map((e) => Number(e.id)), status: read ? 'read' : 'unread' }),
+        body: JSON.stringify({ entry_ids: batch.map((e) => Number(e.id)), status: read ? 'read' : 'unread' }),
       });
     }
   }

@@ -1,3 +1,4 @@
+import { chunks, tally } from '../lib/collections';
 import { parseArticle, safeUrl } from '../lib/html';
 import { joinUrl, request, responseError, send } from './http';
 import { AuthError, UNCATEGORIZED } from './types';
@@ -212,10 +213,7 @@ export class GReaderBackend implements Backend {
         n: '250',
         ...(c ? { c } : {}),
       });
-      for (const item of page.items ?? []) {
-        const feed = item.origin?.streamId;
-        if (feed) counts[feed] = (counts[feed] ?? 0) + 1;
-      }
+      tally(page.items ?? [], (item) => item.origin?.streamId, counts);
       c = page.continuation;
       if (!c) break;
     }
@@ -254,9 +252,7 @@ export class GReaderBackend implements Backend {
   }
 
   async setRead(entries: Entry[], read: boolean): Promise<void> {
-    // Batch to keep request bodies a sensible size.
-    for (let i = 0; i < entries.length; i += 100) {
-      const batch = entries.slice(i, i + 100);
+    for (const batch of chunks(entries, 100)) {
       await this.post('/reader/api/0/edit-tag', [...batch.map((e) => ['i', e.id] as [string, string]), [read ? 'a' : 'r', READ]]);
     }
   }

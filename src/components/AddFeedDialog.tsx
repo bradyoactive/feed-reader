@@ -2,15 +2,14 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Feed, Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
+import { withScheme } from '../api/http';
 import { queryKeys, useActions, useCategories, useFeeds } from '../hooks/data';
 import { navigate, routeHash } from '../lib/route';
 import { toast } from '../lib/toast';
 import { Sheet, SheetClose } from './Sheet';
+import { Field, inputClass, Notice } from './ui';
 
 const NEW = '__new';
-
-const input =
-  'h-12 w-full rounded-xl border border-input-border bg-input-bg px-3.5 text-base text-text placeholder:text-muted focus:border-accent focus:outline-none md:h-11 md:rounded-[10px] md:text-[14.5px]';
 
 interface Props {
   open: boolean;
@@ -56,7 +55,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
     setError(null);
     try {
       const id = await subscribe(
-        /^https?:\/\//i.test(address) ? address : `https://${address}`,
+        withScheme(address),
         category === NEW ? { newTitle: newTitle.trim() } : { id: category },
       );
       const title = qc.getQueryData<Feed[]>(queryKeys.feeds)?.find((f) => f.id === id)?.title;
@@ -78,10 +77,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
       className="px-[18px] md:inset-x-auto md:top-[140px] md:bottom-auto md:left-1/2 md:w-[460px] md:max-w-[calc(100%-32px)] md:-translate-x-1/2 md:rounded-2xl md:p-6"
     >
       <form onSubmit={submit} className="mt-4 flex flex-col gap-4 md:mt-[18px] md:gap-[18px]">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="feed-url" className="text-[13px] font-semibold">
-            Feed address
-          </label>
+        <Field id="feed-url" label="Feed address">
           <input
             id="feed-url"
             type="url"
@@ -91,15 +87,12 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
             placeholder="https://example.com/feed.xml"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            className={input}
+            className={inputClass}
           />
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="feed-category" className="text-[13px] font-semibold">
-            Category
-          </label>
-          <select id="feed-category" value={category} onChange={(e) => setCategory(e.target.value)} className={`${input} px-3`}>
+        <Field id="feed-category" label="Category">
+          <select id="feed-category" value={category} onChange={(e) => setCategory(e.target.value)} className={`${inputClass} px-3`}>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.title}
@@ -114,15 +107,15 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
               autoFocus
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              className={input}
+              className={inputClass}
             />
           )}
-        </div>
+        </Field>
 
         {error && (
-          <div role="alert" className="rounded-[10px] bg-err-bg px-3.5 py-3 text-[13.5px] text-err-fg">
+          <Notice tone="error" role="alert">
             {error}
-          </div>
+          </Notice>
         )}
 
         <div className="mt-1 flex justify-end gap-2.5">

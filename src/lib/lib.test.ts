@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Entry } from '../api/types';
+import { chunks, tally } from './collections';
 import { dayLabel, groupByDay } from './dates';
 import { parseArticle, safeUrl } from './html';
 import { parseHash, routeHash, scopeExists, setRouteNames, slugify } from './route';
@@ -109,5 +110,18 @@ describe('routes', () => {
     expect(parseHash('#/settings').page).toBe('settings');
     expect(slugify('日本のニュース')).toBe('日本のニュース');
     expect(slugify('!!!')).toBe('untitled');
+  });
+});
+
+describe('collections', () => {
+  it('tallies by key, skipping items without one, into existing counts', () => {
+    const counts = { a: 1 };
+    expect(tally([{ f: 'a' }, { f: 'b' }, { f: undefined }, { f: 'a' }], (x) => x.f, counts)).toEqual({ a: 3, b: 1 });
+    expect(tally(['x', 'x'], (x) => x, {}, -1)).toEqual({ x: -2 });
+  });
+
+  it('splits into runs of at most the given size', () => {
+    expect(chunks([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
+    expect(chunks([], 3)).toEqual([]);
   });
 });

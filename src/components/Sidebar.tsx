@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronRight, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
 import { connectionLabel } from '../api';
 import type { Feed, Filter, Scope } from '../api/types';
 import { useActions, useSidebarCounts, useSidebarModel, useSyncState } from '../hooks/data';
+import { useVisitMemory } from '../hooks/visit';
 import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
@@ -110,7 +111,7 @@ function FeedRow({ feed, href, selected, confirming, count, touch, onPick, onUns
 
 export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const model = useSidebarModel();
-  const { counts, ready: countsReady } = useSidebarCounts(filter);
+  const counts = useSidebarCounts(filter);
   const { sync, unsubscribe } = useActions();
   const { open, toggle, ensure } = useOpenCategories();
   const [adding, setAdding] = useState(false);
@@ -128,15 +129,10 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory]);
 
-  // Feeds that had items when this view opened stay listed until the view changes,
+  // Feeds that have had items during this view stay listed until the view changes,
   // so the sidebar doesn't shuffle while you read.
-  const sticky = useRef<{ key: string; ids: Set<string> }>({ key: '', ids: new Set() });
-  const viewKey = `${scopeKey(scope)}|${filter}`;
-  if (sticky.current.key !== viewKey && countsReady) {
-    sticky.current = { key: viewKey, ids: new Set(Object.keys(counts).filter((id) => counts[id] > 0)) };
-  }
-  const feedVisible = (id: string) =>
-    filter === 'all' || (counts[id] ?? 0) > 0 || sticky.current.ids.has(id) || (scope.kind === 'feed' && scope.id === id);
+  const keep = useVisitMemory(`${scopeKey(scope)}|${filter}`);
+  const feedVisible = (id: string) => filter === 'all' || keep(id, (counts[id] ?? 0) > 0) || (scope.kind === 'feed' && scope.id === id);
 
   const isSel = (s: Scope) => scopeKey(s) === scopeKey(scope);
   const rowH = touch ? 'h-11' : 'h-9';

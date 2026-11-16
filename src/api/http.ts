@@ -1,5 +1,10 @@
 import { AuthError, HttpError } from './types';
 
+/** A typed address with https:// added when it has no scheme ("example.com/feed" → "https://example.com/feed"). */
+export function withScheme(address: string): string {
+  return /^https?:\/\//i.test(address) ? address : `https://${address}`;
+}
+
 /** Joins a base URL and a path without doubling or dropping slashes. */
 export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;

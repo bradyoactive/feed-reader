@@ -15,6 +15,7 @@ import {
   useUnreadCounts,
   type SidebarModel,
 } from '../hooks/data';
+import { useVisitMemory } from '../hooks/visit';
 import { animateTo, useSwipe, type SwipeDirection, type SwipeSession } from '../hooks/swipe';
 import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } from '../lib/route';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
@@ -164,8 +165,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
 
   // Items that matched the filter at some point during this visit to the view. Reading or unstarring
   // something keeps it on screen (dimmed) until you leave; coming back starts a fresh visit, so it's gone.
-  const visit = useRef({ key: '', matched: new Set<string>() });
-  if (visit.current.key !== viewKey) visit.current = { key: viewKey, matched: new Set() };
+  const keep = useVisitMemory(viewKey);
 
   const entries = useMemo(() => {
     const matches = (e: Entry) => (filter === 'unread' ? !e.read : filter === 'starred' ? e.starred : true);
@@ -175,12 +175,11 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       for (const e of p.entries) {
         if (seen.has(e.id)) continue;
         seen.add(e.id);
-        if (matches(e)) visit.current.matched.add(e.id);
-        if (visit.current.matched.has(e.id)) list.push(e);
+        if (keep(e.id, matches(e))) list.push(e);
       }
     }
     return list;
-  }, [entriesQuery.data, filter, viewKey]);
+  }, [entriesQuery.data, filter, keep]);
 
   const entriesRef = useRef(entries);
   entriesRef.current = entries;

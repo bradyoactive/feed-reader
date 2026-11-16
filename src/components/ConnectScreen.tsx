@@ -1,10 +1,12 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, CircleCheck, Info, LogOut, Rss } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
+import { ArrowLeft, Info, LogOut, Rss } from 'lucide-react';
 import { createBackend } from '../api';
 import { greaderLogin } from '../api/greader';
+import { withScheme } from '../api/http';
 import { minifluxLogin, type MinifluxAuth } from '../api/miniflux';
 import { describeError } from '../api/types';
 import type { ConnectionConfig } from '../lib/storage';
+import { Field, inputClass, Notice } from './ui';
 
 type Api = 'miniflux' | 'greader';
 type MfAuthType = 'token' | 'basic';
@@ -15,21 +17,6 @@ interface Props {
   onConnect(config: ConnectionConfig, remember: boolean): void;
   onDisconnect?: () => void;
   onBack?: () => void;
-}
-
-const input =
-  'h-11 w-full rounded-[10px] border border-input-border bg-input-bg px-3.5 text-[14.5px] text-text placeholder:text-muted focus:border-accent focus:outline-none';
-
-function Field({ id, label, hint, children }: { id: string; label: string; hint?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13px] font-semibold">
-        {label}
-      </label>
-      {children}
-      {hint && <span className="text-[12.5px] leading-snug text-muted2">{hint}</span>}
-    </div>
-  );
 }
 
 export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack }: Props) {
@@ -52,10 +39,8 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
 
   /** Signs in and returns a config ready to save. */
   async function signIn(): Promise<ConnectionConfig> {
-    let base = url.trim();
-    if (!base) throw new Error('Enter your server URL.');
-    if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-    base = base.replace(/\/+$/, '');
+    if (!url.trim()) throw new Error('Enter your server URL.');
+    const base = withScheme(url.trim()).replace(/\/+$/, '');
     if (mf) {
       const auth: MinifluxAuth =
         mfAuth === 'token' ? { type: 'token', token: token.trim() } : { type: 'basic', username: username.trim(), password };
@@ -121,7 +106,7 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
           </p>
         </div>
 
-        {notice && <div className="w-full rounded-[10px] bg-err-bg px-3.5 py-3 text-sm text-err-fg">{notice}</div>}
+        {notice && <Notice tone="error">{notice}</Notice>}
 
         <form onSubmit={submit} className="flex w-full flex-col gap-5 rounded-2xl border border-border bg-bg p-7">
           <fieldset className="flex flex-col gap-2">
@@ -156,7 +141,7 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={mf ? 'https://reader.example.com' : 'https://rss.example.com/api/greader.php'}
-              className={input}
+              className={inputClass}
             />
           </Field>
 
@@ -173,12 +158,12 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
 
           {mf && mfAuth === 'token' ? (
             <Field id="token" label="API key" hint="Create one in Miniflux under Settings → API Keys. You can revoke it there any time.">
-              <input id="token" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} className={input} />
+              <input id="token" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} className={inputClass} />
             </Field>
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field id="username" label="Username">
-                <input id="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} className={input} />
+                <input id="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputClass} />
               </Field>
               <Field id="password" label={mf ? 'Password' : 'API password'}>
                 <input
@@ -187,7 +172,7 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={input}
+                  className={inputClass}
                 />
               </Field>
               {!mf && (
@@ -224,15 +209,9 @@ export function ConnectScreen({ current, notice, onConnect, onDisconnect, onBack
           </div>
 
           {result && (
-            <div
-              role="status"
-              className={`flex items-center gap-2.5 rounded-[10px] px-3.5 py-3 text-[13.5px] font-medium ${
-                result.ok ? 'bg-ok-bg text-ok-fg' : 'bg-err-bg text-err-fg'
-              }`}
-            >
-              {result.ok && <CircleCheck size={18} aria-hidden />}
+            <Notice tone={result.ok ? 'ok' : 'error'} role="status">
               {result.message}
-            </div>
+            </Notice>
           )}
 
           <div className="flex flex-wrap justify-end gap-2.5">
