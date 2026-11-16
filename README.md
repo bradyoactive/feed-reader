@@ -65,6 +65,11 @@ Behaviour worth knowing:
 
 - Lists are snapshots: items you mark read stay visible (dimmed) until you change view or sync, so nothing jumps
   under the cursor. The sidebar keeps feeds listed for the same reason.
+- **Offline:** after each sync Skim downloads your unread articles (up to 1,000) and starred ones (up to 500)
+  in the background and keeps them on the device. A view that can't be loaded from the server is built from
+  those plus any lists you loaded before, with a note saying so; under All that means unread, starred and
+  previously loaded articles only. Adding a feed and unsubscribing need a connection. Articles still open on
+  their own site, which needs one too.
 - Marking articles read or starred works without a connection: the change shows at once, is saved on the
   device, and is sent (in order) when the server can be reached again, even after closing the app.
 - **Sync** waits for your changes to reach the server, then reloads everything from it: counts, feeds and the lists

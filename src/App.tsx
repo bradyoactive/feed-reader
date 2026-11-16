@@ -13,7 +13,7 @@ import { idbPersister } from './lib/persist';
 import { navigate, useRoute } from './lib/route';
 
 /** What's kept on the device between launches, so Skim opens with your lists and works offline. */
-const PERSISTED = new Set(['categories', 'feeds', 'counts', 'entries', 'feedIcon', 'meta']);
+const PERSISTED = new Set(['categories', 'feeds', 'counts', 'entries', 'offline', 'feedIcon', 'meta']);
 
 /**
  * The cache is saved in IndexedDB per connection. A query that failed to reload (offline) still has its

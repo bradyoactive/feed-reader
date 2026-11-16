@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Entry, Filter, Scope } from '../api/types';
-import { describeError } from '../api/types';
+import { describeError, isNetworkError } from '../api/types';
 import {
   feedsInScope,
   isRecentlyAdded,
@@ -11,12 +11,15 @@ import {
   useCategories,
   useEntries,
   useFeeds,
+  useOfflineSet,
   useSidebarModel,
   useSyncOnLaunch,
   useUnreadCounts,
   type SidebarModel,
 } from '../hooks/data';
+import { localEntries } from '../hooks/offline';
 import { useVisitMemory } from '../hooks/visit';
+import { offlineLabel, useOnline } from '../lib/network';
 import { animateTo, useSwipe, type SwipeDirection, type SwipeSession } from '../hooks/swipe';
 import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } from '../lib/route';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
@@ -135,6 +138,8 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const model = useSidebarModel();
   const entriesQuery = useEntries(stableScope, filter, feeds.data, ready);
   useSyncOnLaunch(actions.sync);
+  const online = useOnline();
+  const offlineSet = useOfflineSet(feeds.data);
 
   // URLs use category and feed names; the router matches them to ids using the current lists.
   useEffect(() => setRouteNames(categories.data ?? null, feeds.data ?? null), [categories.data, feeds.data]);
@@ -169,11 +174,26 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   // something keeps it on screen (dimmed) until you leave; coming back starts a fresh visit, so it's gone.
   const keep = useVisitMemory(viewKey);
 
+  // A view the server can't give us right now (offline, and not loaded before) is built from what's saved:
+  // the articles kept for offline plus every list loaded earlier, filtered to this view's feeds.
+  const local =
+    !entriesQuery.data && !!feeds.data && (!online || (entriesQuery.isError && isNetworkError(entriesQuery.error)));
+  const localPages = useMemo(() => {
+    if (!local || !feeds.data) return null;
+    const lists = [
+      offlineSet.data?.entries ?? [],
+      ...qc
+        .getQueriesData<{ pages: { entries: Entry[] }[] }>({ queryKey: ['entries'] })
+        .map(([, d]) => d?.pages.flatMap((p) => p.entries) ?? []),
+    ];
+    return [{ entries: localEntries(lists, feedsInScope(scope, feeds.data)) }];
+  }, [local, offlineSet.data, feeds.data, viewKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const entries = useMemo(() => {
     const matches = (e: Entry) => (filter === 'unread' ? !e.read : filter === 'starred' ? e.starred : true);
     const seen = new Set<string>();
     const list: Entry[] = [];
-    for (const p of entriesQuery.data?.pages ?? []) {
+    for (const p of localPages ?? entriesQuery.data?.pages ?? []) {
       for (const e of p.entries) {
         if (seen.has(e.id)) continue;
         seen.add(e.id);
@@ -181,7 +201,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       }
     }
     return list;
-  }, [entriesQuery.data, filter, keep]);
+  }, [localPages, entriesQuery.data, filter, keep]);
 
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -293,7 +313,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   };
 
   // A failed reload keeps the last good data on screen (offline, say); errors show only when there's nothing.
-  const error = (!entriesQuery.data && entriesQuery.error) || (!feeds.data && feeds.error) || null;
+  const error = (!local && !entriesQuery.data && entriesQuery.error) || (!feeds.data && feeds.error) || null;
 
   return (
     <div className="flex h-dvh bg-bg text-text">
@@ -316,14 +336,26 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             feedsById={feedsById}
             filter={filter}
             actions={actions}
-            loading={entriesQuery.isPending}
+            loading={!local && entriesQuery.isPending}
             error={error ? describeError(error) : null}
-            hasMore={!!entriesQuery.hasNextPage}
-            loadingMore={entriesQuery.isFetchingNextPage}
+            hasMore={!local && !!entriesQuery.hasNextPage}
+            loadingMore={!local && entriesQuery.isFetchingNextPage}
             onLoadMore={() => void entriesQuery.fetchNextPage()}
-            {...(scope.kind === 'feed' && isRecentlyAdded(scope.id)
-              ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
-              : { emptyMessage: EMPTY[filter] })}
+            notice={
+              local
+                ? `${offlineLabel() === 'offline' ? 'Offline' : 'Can’t reach your server'}: showing articles saved on this device${
+                    filter === 'all' ? ' (your unread and starred ones, and any you loaded before)' : ''
+                  }.`
+                : undefined
+            }
+            {...(local
+              ? {
+                  emptyTitle: 'Nothing saved for this view',
+                  emptyMessage: 'Skim keeps your unread and starred articles for reading offline. Sync while connected to download them.',
+                }
+              : scope.kind === 'feed' && isRecentlyAdded(scope.id)
+                ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
+                : { emptyMessage: EMPTY[filter] })}
           />
         </div>
 

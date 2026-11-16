@@ -3,6 +3,7 @@ import type { Backend, Entry, EntryPage, EntryRef } from '../api/types';
 import { describeError, isNetworkError } from '../api/types';
 import { tally } from '../lib/collections';
 import { toast } from '../lib/toast';
+import type { OfflineSet } from './offline';
 
 /**
  * Changes made here (read, star) go to the server as mutations under this key. They carry plain data, so
@@ -41,11 +42,12 @@ export function countDeltas(w: Write): Counts {
 /** The count query a write's deltas apply to. */
 const countsKeyFor = (w: Write) => ['counts', w.field === 'read' ? 'unread' : 'starred'];
 
-/** Rewrites every page of every cached article list. */
+/** Rewrites every page of every cached article list, and the articles kept for offline. */
 export function patchPages(qc: QueryClient, fn: (entries: Entry[]) => Entry[]) {
   qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
     data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: fn(p.entries) })) },
   );
+  qc.setQueriesData<OfflineSet>({ queryKey: ['offline'] }, (data) => data && { ...data, entries: fn(data.entries) });
 }
 
 /** Changes a copy of the cached counts under `key` (every kind of count for ['counts']), if loaded. */
@@ -109,6 +111,8 @@ export function registerWrites(qc: QueryClient, b: Backend) {
       qc.setQueryData<InfiniteData<EntryPage>>(key, (data) =>
         data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: applyWrites(p.entries, writes) })) },
       );
+    } else if (key[0] === 'offline') {
+      qc.setQueryData<OfflineSet>(key, (data) => data && { ...data, entries: applyWrites(data.entries, writes) });
     } else if (key[0] === 'counts' && (key[1] === 'unread' || key[1] === 'starred')) {
       const relevant = writes.filter((w) => countsKeyFor(w)[1] === key[1]);
       if (relevant.length) qc.setQueryData<Counts | null>(key, (c) => (c ? applyCountWrites(c, relevant) : c));

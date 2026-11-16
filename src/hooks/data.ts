@@ -14,6 +14,7 @@ import { describeError, UNCATEGORIZED } from '../api/types';
 import { retryConnection } from '../lib/network';
 import { scopeKey, setRouteNames } from '../lib/route';
 import { toast } from '../lib/toast';
+import { downloadOfflineSet, type OfflineSet } from './offline';
 import { patchCounts, patchPages, showWrite, WRITE, writesSettled, type Write } from './writes';
 
 export const BackendContext = createContext<Backend | null>(null);
@@ -93,6 +94,8 @@ const keys = {
   starred: ['counts', 'starred'] as const,
   total: ['counts', 'total'] as const,
   entries: (scope: Scope, filter: Filter) => ['entries', scopeKey(scope), filter] as const,
+  /** Unread and starred articles kept for offline reading (see hooks/offline). */
+  offline: ['offline'] as const,
   /** When the last sync started (ms). Set here, never fetched. */
   lastSync: ['meta', 'lastSync'] as const,
 };
@@ -125,6 +128,24 @@ export function useUnreadCounts() {
 export function useStarredCounts(enabled: boolean) {
   const b = useBackend();
   return useQuery({ queryKey: keys.starred, queryFn: () => b.getStarredCounts(), enabled, staleTime: Infinity });
+}
+
+/**
+ * Unread and starred articles across all feeds, downloaded once the feed list is in and again after each
+ * Sync, and saved with the cache so lists still work offline. Not part of syncing: it runs in the
+ * background and doesn't hold up the sync indicator.
+ */
+export function useOfflineSet(feeds: Feed[] | undefined) {
+  const b = useBackend();
+  return useQuery<OfflineSet>({
+    queryKey: keys.offline,
+    queryFn: () => downloadOfflineSet(b, feeds ?? []),
+    // Demo data lives in this tab only; there's nothing to keep.
+    enabled: !!feeds && b.kind !== 'demo',
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  });
 }
 
 /** Feed ids a scope covers. */
@@ -203,6 +224,8 @@ export function useActions(): Actions {
       const failed = qc.getQueryCache().findAll({ type: 'active', predicate: isSynced }).find((q) => q.state.status === 'error');
       if (failed) throw failed.state.error;
       qc.setQueryData(keys.lastSync, startedAt);
+      // Then, in the background, refresh what's kept for reading offline.
+      void qc.invalidateQueries({ queryKey: keys.offline });
     },
     onError: (err) => toast(describeError(err), 'error'),
   });

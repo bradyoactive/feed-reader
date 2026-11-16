@@ -18,6 +18,8 @@ interface Props {
   emptyTitle?: string;
   emptyMessage: string;
   filter: Filter;
+  /** A line above the list, e.g. that it was built from what's saved offline. */
+  notice?: string;
 }
 
 const column = 'mx-auto w-full max-w-[1120px] px-3 md:px-6';
@@ -45,7 +47,7 @@ function DayHeader({ group, onMarkDay }: { group: DayGroup; onMarkDay(g: DayGrou
   );
 }
 
-export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, filter, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
+export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, filter, notice, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
   const groups = useMemo(() => groupByDay(entries), [entries]);
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
   const groupCounts = useMemo(() => groups.map((g) => g.entries.length), [groups]);
@@ -67,6 +69,7 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
   if (flat.length === 0) {
     return (
       <div className={`${column} flex flex-col items-center gap-2 py-24 text-center`}>
+        {notice && <NoticeBar text={notice} />}
         <span className="text-lg font-semibold">{emptyTitle}</span>
         <span className="text-sm text-muted">{emptyMessage}</span>
       </div>
@@ -110,23 +113,38 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
           </div>
         );
       }}
-      context={{ loadingMore, hasMore }}
-      components={{ Footer: ListFooter }}
+      context={{ loadingMore, hasMore, notice }}
+      components={{ Header: ListHeader, Footer: ListFooter }}
     />
   );
 }
 
-interface FooterContext {
+interface ListContext {
   loadingMore: boolean;
   hasMore: boolean;
+  notice?: string;
 }
 
-function ListFooter({ context }: { context?: FooterContext }) {
+function NoticeBar({ text }: { text: string }) {
+  return <div className="mb-1 rounded-lg bg-seg-bg px-3 py-2 text-center text-[13px] text-muted2">{text}</div>;
+}
+
+function ListHeader({ context }: { context?: ListContext }) {
+  if (!context?.notice) return null;
+  return (
+    <div className={`${column} pt-3`}>
+      <NoticeBar text={context.notice} />
+    </div>
+  );
+}
+
+function ListFooter({ context }: { context?: ListContext }) {
   if (!context) return null;
   const atEnd = !context.loadingMore && !context.hasMore;
+  const end = context.notice ? 'That’s everything saved on this device for this view.' : 'That’s everything in this view.';
   return (
     <div className={`${column} pt-6 pb-8 text-center text-[13px] text-muted`}>
-      {context.loadingMore ? 'Loading more…' : atEnd ? 'That’s everything in this view.' : ''}
+      {context.loadingMore ? 'Loading more…' : atEnd ? end : ''}
     </div>
   );
 }
