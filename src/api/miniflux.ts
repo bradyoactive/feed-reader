@@ -261,9 +261,8 @@ export class MinifluxBackend implements Backend {
   }
 
   async setStarred(entry: Entry, starred: boolean): Promise<void> {
-    // Miniflux only offers a toggle, so only call it when the state really changes.
-    if (entry.starred === starred) return;
-    await this.call(`/v1/entries/${entry.id}/bookmark`, { method: 'PUT' });
+    // Sets the state outright (Miniflux 2.3.2+), so it's right whatever another device did meanwhile.
+    await this.call('/v1/entries', { method: 'PUT', body: JSON.stringify({ entry_ids: [Number(entry.id)], starred }) });
   }
 
   async markScopeRead(scope: Scope): Promise<void> {

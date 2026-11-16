@@ -208,14 +208,15 @@ describe('miniflux', () => {
     expect(JSON.parse(String(init!.body))).toEqual({ entry_ids: [1, 2], status: 'read' });
   });
 
-  it('only toggles the bookmark when the state changes', async () => {
+  it('sets starred outright instead of toggling', async () => {
     const f = mockFetch(() => undefined);
-    const b = new MinifluxBackend(config);
-    const e = toEntry(entry(1, '2026-11-11T10:00:00Z'));
-    await b.setStarred(e, false);
-    expect(f).not.toHaveBeenCalled();
-    await b.setStarred(e, true);
-    expect(String(f.mock.calls[0][0])).toBe('https://rss.test/v1/entries/1/bookmark');
+    const e = toEntry(entry(1, '2026-11-11T10:00:00Z', { starred: true }));
+    // Even when the local copy already says starred: the server may disagree.
+    await new MinifluxBackend(config).setStarred(e, true);
+    const [url, init] = f.mock.calls[0];
+    expect(String(url)).toBe('https://rss.test/v1/entries');
+    expect(init!.method).toBe('PUT');
+    expect(JSON.parse(String(init!.body))).toEqual({ entry_ids: [1], starred: true });
   });
 
   it('marks a whole scope read via the right endpoint', async () => {
