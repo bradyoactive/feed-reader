@@ -22,8 +22,27 @@ function write(store: Storage | undefined, key: string, value: string | null) {
   }
 }
 
-const local = typeof localStorage === 'undefined' ? undefined : localStorage;
-const session = typeof sessionStorage === 'undefined' ? undefined : sessionStorage;
+function store(name: 'localStorage' | 'sessionStorage'): Storage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window[name];
+  } catch {
+    return undefined; // blocked site data throws on access
+  }
+}
+
+const local = store('localStorage');
+const session = store('sessionStorage');
+export const localStore = local;
+
+/** Where a connection's saved query cache (feed icons) lives. */
+export const cacheKey = (config: ConnectionConfig) => `skim.cache.${config.kind === 'demo' ? 'demo' : config.url}`;
+
+// Feed icons used to be cached one per key; the query cache keeps them now.
+try {
+  for (const k of Object.keys(local ?? {})) if (k.startsWith('skim.icon.')) local!.removeItem(k);
+} catch {
+  /* nothing to tidy */
+}
 
 /** "Remember on this device" uses localStorage; otherwise the tab's sessionStorage. */
 export function loadConnection(): ConnectionConfig | null {
@@ -37,11 +56,15 @@ export function loadConnection(): ConnectionConfig | null {
 }
 
 export function saveConnection(config: ConnectionConfig, remember: boolean) {
-  clearConnection();
+  write(local, CONFIG_KEY, null);
+  write(session, CONFIG_KEY, null);
   write(remember ? local : session, CONFIG_KEY, JSON.stringify(config));
 }
 
+/** Signs out: forgets the connection and its saved cache. */
 export function clearConnection() {
+  const config = loadConnection();
+  if (config) write(local, cacheKey(config), null);
   write(local, CONFIG_KEY, null);
   write(session, CONFIG_KEY, null);
 }

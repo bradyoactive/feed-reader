@@ -96,14 +96,9 @@ export class MinifluxBackend implements Backend {
   }
 
   async getFeedIcon(iconId: string): Promise<string | null> {
-    const key = `skim.icon.${this.config.url}|${iconId}`;
-    const cached = readIconCache(key);
-    if (cached !== undefined) return cached;
     const icon = await this.call<{ data?: string }>(`/v1/icons/${iconId}`);
     // `data` is "image/png;base64,…", a data: URL without its scheme.
-    const url = icon?.data ? (icon.data.startsWith('data:') ? icon.data : `data:${icon.data}`) : null;
-    writeIconCache(key, url);
-    return url;
+    return icon?.data ? (icon.data.startsWith('data:') ? icon.data : `data:${icon.data}`) : null;
   }
 
   async getUnreadCounts(): Promise<Record<string, number>> {
@@ -219,24 +214,5 @@ export class MinifluxBackend implements Backend {
   async setStarred(entry: Entry, starred: boolean): Promise<void> {
     // Sets the state outright (Miniflux 2.3.2+), so it's right whatever another device did meanwhile.
     await this.call('/v1/entries', { method: 'PUT', body: JSON.stringify({ entry_ids: [Number(entry.id)], starred }) });
-  }
-}
-
-/** Icons are kept in localStorage so they aren't downloaded again on every launch. Large ones are skipped. */
-function readIconCache(key: string): string | null | undefined {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? undefined : v || null;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeIconCache(key: string, url: string | null) {
-  if (url && url.length > 24_000) return;
-  try {
-    localStorage.setItem(key, url ?? '');
-  } catch {
-    /* storage full or blocked: just fetch next time */
   }
 }

@@ -155,7 +155,7 @@ describe('miniflux', () => {
     await expect(new MinifluxBackend(config).subscribe('https://x.test/feed', { id: '1' })).rejects.toThrow('This feed already exists.');
   });
 
-  it('reads icon ids from feeds and fetches icons as data URLs, cached', async () => {
+  it('reads icon ids from feeds and fetches icons as data URLs', async () => {
     const f = mockFetch((url) => {
       if (url.pathname === '/v1/feeds') return [{ id: 3, title: 'A', site_url: 'https://a.test', icon: { icon_id: 501 } }, { id: 4, title: 'B', site_url: 'https://b.test', icon: null }];
       return { id: 501, data: 'image/png;base64,AAAA', mime_type: 'image/png' };
@@ -165,14 +165,6 @@ describe('miniflux', () => {
     expect(feeds.map((x) => x.iconId)).toEqual(['501', undefined]);
     expect(await b.getFeedIcon('501')).toBe('data:image/png;base64,AAAA');
     expect(String(f.mock.calls[1][0])).toBe('https://rss.test/v1/icons/501');
-    expect(await b.getFeedIcon('501')).toBe('data:image/png;base64,AAAA');
-    expect(f).toHaveBeenCalledTimes(2);
-  });
-
-  it('doesn’t remember a failed icon fetch, so it’s tried again next time', async () => {
-    mockFetch(() => new Response('Bad gateway', { status: 502 }));
-    await expect(new MinifluxBackend(config).getFeedIcon('777')).rejects.toThrow();
-    expect(localStorage.getItem('skim.icon.https://rss.test/|777')).toBeNull();
   });
 
   it('unsubscribes with DELETE', async () => {

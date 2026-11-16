@@ -1,13 +1,28 @@
 import { useMemo, useState } from 'react';
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider, type Query } from '@tanstack/react-query';
+import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createBackend } from './api';
 import { AuthError } from './api/types';
 import { ConnectScreen } from './components/ConnectScreen';
 import { Reader } from './components/Reader';
 import { Toasts } from './components/Toasts';
 import { BackendContext } from './hooks/data';
-import { clearConnection, loadConnection, saveConnection, type ConnectionConfig } from './lib/storage';
+import { cacheKey, clearConnection, loadConnection, localStore, saveConnection, type ConnectionConfig } from './lib/storage';
 import { navigate, useRoute } from './lib/route';
+
+/**
+ * Only feed icons are kept between launches (so they aren't downloaded again every time); everything else
+ * comes fresh from the server. Large icons are skipped to spare the storage quota.
+ */
+const persistOptions = (config: ConnectionConfig) => ({
+  persister: createSyncStoragePersister({ storage: localStore, key: cacheKey(config) }),
+  maxAge: 30 * 86_400_000,
+  dehydrateOptions: {
+    shouldDehydrateQuery: (q: Query) =>
+      q.queryKey[0] === 'feedIcon' && q.state.status === 'success' && String(q.state.data ?? '').length <= 24_000,
+  },
+});
 
 export function App() {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => loadConnection());
@@ -32,7 +47,7 @@ export function App() {
         mutations: { networkMode: 'always' },
       },
     });
-    return { backend: createBackend(config), client };
+    return { backend: createBackend(config), client, persist: config.kind === 'demo' ? null : persistOptions(config) };
   }, [config]);
 
   const connect = (next: ConnectionConfig, remember: boolean) => {
@@ -62,9 +77,15 @@ export function App() {
         />
       ) : (
         <BackendContext.Provider value={session.backend}>
-          <QueryClientProvider client={session.client}>
-            <Reader connection={config!} />
-          </QueryClientProvider>
+          {session.persist ? (
+            <PersistQueryClientProvider client={session.client} persistOptions={session.persist}>
+              <Reader connection={config!} />
+            </PersistQueryClientProvider>
+          ) : (
+            <QueryClientProvider client={session.client}>
+              <Reader connection={config!} />
+            </QueryClientProvider>
+          )}
         </BackendContext.Provider>
       )}
       <Toasts />
