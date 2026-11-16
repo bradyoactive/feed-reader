@@ -185,27 +185,10 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
 
-  // Phones: Back closes the drawer instead of leaving the view. Opening it adds a history entry
-  // (same URL) that Back pops; closing it any other way takes that entry back off.
-  useEffect(() => {
-    if (!drawerOpen) return;
-    if (!history.state?.skimDrawer) history.pushState({ skimDrawer: true }, '');
-    const onPop = () => setDrawerOpen(false);
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, [drawerOpen]);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  const dismissDrawer = useCallback(() => {
-    setDrawerOpen(false);
-    if (history.state?.skimDrawer) history.back();
-  }, []);
-
-  // Picking a feed in the drawer follows its link, which replaces the drawer's entry with the new view;
-  // if nothing navigated (it was already selected), drop the entry like any other close.
-  const onDrawerPick = useCallback(() => {
-    setDrawerOpen(false);
-    setTimeout(() => history.state?.skimDrawer && history.back(), 0);
-  }, []);
+  // The drawer isn't in history, so Back with it open goes to the previous view; close it when the view changes.
+  useEffect(closeDrawer, [viewKey, closeDrawer]);
 
   /** Positions the drawer under the finger: 0 = closed, 1 = open. */
   const placeDrawer = (p: number) => {
@@ -234,7 +217,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       d?.style.removeProperty('transform');
       s?.style.removeProperty('opacity');
       setDrawerDragging(false);
-      if (!open) dismissDrawer();
+      if (!open) closeDrawer();
     };
     if (d) animateTo(d, open ? 'translateX(0)' : 'translateX(-100%)', done);
     else done();
@@ -382,7 +365,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
         </nav>
       </main>
 
-      <Dialog.Root open={drawerOpen} onOpenChange={(open) => (open ? setDrawerOpen(true) : dismissDrawer())}>
+      <Dialog.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
         <Dialog.Portal>
           <Dialog.Overlay ref={scrimRef} className="fixed inset-0 z-30 bg-scrim md:hidden" style={drawerDragging ? { opacity: 0 } : undefined} />
           <Dialog.Content
@@ -392,7 +375,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
             className="fixed inset-y-0 left-0 z-40 w-[312px] max-w-[85vw] bg-side shadow-2xl focus:outline-none md:hidden"
           >
             <Dialog.Title className="sr-only">Feeds</Dialog.Title>
-            <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={onDrawerPick} />
+            <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={closeDrawer} />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
