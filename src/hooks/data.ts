@@ -63,9 +63,18 @@ export function useBackend(): Backend {
 
 export function useSyncState(): SyncState {
   const b = useBackend();
+  const qc = useQueryClient();
   const syncing = useIsMutating({ mutationKey: SYNC }) > 0;
-  // The initial load (and a view's first load) is synced data being fetched for the first time.
-  const loading = useIsFetching({ predicate: (q) => isSynced(q) && q.state.dataUpdatedAt === 0 }) > 0;
+  // The initial load counts as a sync: the lists, unread counts and the first article list loading for the first time.
+  const loading =
+    useIsFetching({
+      predicate: (q) => {
+        if (q.state.dataUpdatedAt > 0) return false;
+        const [kind, which] = q.queryKey;
+        if (kind === 'categories' || kind === 'feeds' || (kind === 'counts' && which === 'unread')) return true;
+        return kind === 'entries' && !qc.getQueryCache().findAll({ queryKey: ['entries'] }).some((e) => e.state.dataUpdatedAt > 0);
+      },
+    }) > 0;
   const synced = useMutationState({ filters: { mutationKey: SYNC, status: 'success' }, select: (m) => m.state.submittedAt });
   return { syncing: syncing || loading, last: synced.length ? Math.max(...synced) : connectedAt.get(b)! };
 }
