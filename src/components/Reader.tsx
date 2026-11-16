@@ -11,7 +11,6 @@ import {
   useCategories,
   useEntries,
   useFeeds,
-  useInitialLoadDone,
   useSidebarModel,
   useUnreadCounts,
   type SidebarModel,
@@ -133,9 +132,6 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const unread = useUnreadCounts();
   const model = useSidebarModel();
   const entriesQuery = useEntries(stableScope, filter, feeds.data, ready);
-  // The initial load is a sync too: it's done once the lists, counts and this view's first articles are in
-  // (or failed; the articles never load if the feed list failed).
-  useInitialLoadDone(!feeds.isPending && !categories.isPending && !unread.isPending && (!entriesQuery.isPending || feeds.isError));
 
   // URLs use category and feed names; the router matches them to ids using the current lists.
   useEffect(() => setRouteNames(categories.data ?? null, feeds.data ?? null), [categories.data, feeds.data]);

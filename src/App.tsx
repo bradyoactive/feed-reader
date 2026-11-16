@@ -28,6 +28,8 @@ export function App() {
           retry: (n, err) => !(err instanceof AuthError) && n < 2,
           refetchOnWindowFocus: false,
         },
+        // Writes and syncs fail straight away offline (as fetch does) rather than pausing, so Sync never waits forever.
+        mutations: { networkMode: 'always' },
       },
     });
     return { backend: createBackend(config), client };

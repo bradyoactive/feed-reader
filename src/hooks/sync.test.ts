@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PendingWrites } from './data';
+import { MutationObserver, QueryClient } from '@tanstack/react-query';
+import { writesSettled } from './data';
 
 /** A write the test answers by hand. */
 function deferred() {
@@ -14,19 +15,26 @@ function deferred() {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-describe('PendingWrites', () => {
+const client = () => new QueryClient({ defaultOptions: { mutations: { networkMode: 'always' } } });
+
+/** Starts a server write the way useActions does. */
+function write(qc: QueryClient, promise: Promise<void>) {
+  void new MutationObserver(qc, { mutationKey: ['write'], mutationFn: () => promise }).mutate().catch(() => {});
+}
+
+describe('writesSettled', () => {
   it('settles at once when nothing is in flight', async () => {
-    await expect(new PendingWrites().settled()).resolves.toBeUndefined();
+    await expect(writesSettled(client())).resolves.toBeUndefined();
   });
 
   it('waits for every write, failed ones included', async () => {
-    const w = new PendingWrites();
+    const qc = client();
     const a = deferred();
     const b = deferred();
-    w.track(a.promise);
-    w.track(b.promise).catch(() => {});
+    write(qc, a.promise);
+    write(qc, b.promise);
     let done = false;
-    void w.settled().then(() => (done = true));
+    void writesSettled(qc).then(() => (done = true));
     a.resolve();
     await flush();
     expect(done).toBe(false);
@@ -36,13 +44,13 @@ describe('PendingWrites', () => {
   });
 
   it('also waits for a write started while it was waiting', async () => {
-    const w = new PendingWrites();
+    const qc = client();
     const a = deferred();
     const b = deferred();
-    w.track(a.promise);
+    write(qc, a.promise);
     let done = false;
-    void w.settled().then(() => (done = true));
-    w.track(b.promise);
+    void writesSettled(qc).then(() => (done = true));
+    write(qc, b.promise);
     a.resolve();
     await flush();
     expect(done).toBe(false);
@@ -51,16 +59,9 @@ describe('PendingWrites', () => {
     expect(done).toBe(true);
   });
 
-  it('counts writes started, so a sync can see one began during its reload', () => {
-    const w = new PendingWrites();
-    const before = w.started;
-    w.track(Promise.resolve());
-    expect(w.started).toBe(before + 1);
-  });
-
-  it('passes the write’s own result and error through', async () => {
-    const w = new PendingWrites();
-    await expect(w.track(Promise.resolve(5))).resolves.toBe(5);
-    await expect(w.track(Promise.reject(new Error('bad')))).rejects.toThrow('bad');
+  it('ignores mutations that aren’t writes', async () => {
+    const qc = client();
+    void new MutationObserver(qc, { mutationKey: ['sync'], mutationFn: () => new Promise(() => {}) }).mutate();
+    await expect(writesSettled(qc)).resolves.toBeUndefined();
   });
 });

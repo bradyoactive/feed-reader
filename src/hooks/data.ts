@@ -1,6 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 import {
   useInfiniteQuery,
+  useIsFetching,
+  useIsMutating,
+  useMutation,
+  useMutationState,
   useQuery,
   useQueryClient,
   type InfiniteData,
@@ -20,82 +24,49 @@ export interface SyncState {
   syncing: boolean;
 }
 
-/** Per connection. The first use counts as a sync: the initial load fetches everything. */
-const syncStates = new WeakMap<Backend, SyncState>();
-const syncListeners = new Set<() => void>();
-
-function updateSync(b: Backend, patch: Partial<SyncState>) {
-  syncStates.set(b, { ...syncStates.get(b)!, ...patch });
-  syncListeners.forEach((l) => l());
-}
-
-export function useSyncState(): SyncState {
-  const b = useBackend();
-  return useSyncExternalStore(
-    (cb) => {
-      syncListeners.add(cb);
-      return () => syncListeners.delete(cb);
-    },
-    () => syncStates.get(b)!,
-  );
-}
-
-/** Ends the initial load's "syncing" once `done` (the first counts, feeds and articles are in). */
-export function useInitialLoadDone(done: boolean) {
-  const b = useBackend();
-  useEffect(() => {
-    if (done && syncStates.get(b)!.syncing && !initialDone.has(b)) {
-      initialDone.add(b);
-      updateSync(b, { syncing: false });
-    }
-  }, [b, done]);
-}
-const initialDone = new WeakSet<Backend>();
 /** Feeds subscribed to in this session, so an empty list can say "fetching" instead of "all caught up". */
 const recentlyAdded = new Set<string>();
 export const isRecentlyAdded = (feedId: string) => recentlyAdded.has(feedId);
 
-/**
- * Writes to the server still on their way. Sync waits for them before reloading: a reload the server
- * built before applying your change would bring the old state back.
- */
-export class PendingWrites {
-  private inFlight = new Set<Promise<void>>();
-  /** Counts every write started, so a sync can tell whether one began while it was reloading. */
-  started = 0;
-
-  track<T>(write: Promise<T>): Promise<T> {
-    this.started++;
-    const done = write.then(
-      () => {},
-      () => {},
-    );
-    this.inFlight.add(done);
-    void done.then(() => this.inFlight.delete(done));
-    return write;
-  }
-
-  /** Resolves once no write is in flight (including ones started while waiting). */
-  async settled(): Promise<void> {
-    while (this.inFlight.size > 0) await Promise.all(this.inFlight);
-  }
-}
-
-const pendingWrites = new PendingWrites();
-
-/** Runs a server write for something changed here, so Sync knows to wait for it. */
-function trackWrite<T>(write: () => Promise<T>): Promise<T> {
-  return pendingWrites.track(write());
-}
+/** Server writes for changes made here (read, star) run as mutations under this key, so Sync can wait for them. */
+const WRITE = ['write'];
+const SYNC = ['sync'];
 
 /** What Sync reloads: everything from the server except feed icons. */
 const SYNCED = new Set(['categories', 'feeds', 'counts', 'entries']);
+const isSynced = (q: { queryKey: readonly unknown[] }) => SYNCED.has(q.queryKey[0] as string);
+
+/** Resolves once no write is on its way to the server (including ones started while waiting). */
+export function writesSettled(qc: QueryClient): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    const check = () => {
+      if (qc.isMutating({ mutationKey: WRITE }) > 0) return;
+      unsubscribe();
+      resolve();
+    };
+    unsubscribe = qc.getMutationCache().subscribe(check);
+    check();
+  });
+}
+
+/** When each connection was opened: the initial load counts as its first sync. */
+const connectedAt = new WeakMap<Backend, number>();
 
 export function useBackend(): Backend {
   const b = useContext(BackendContext);
   if (!b) throw new Error('useBackend outside BackendContext');
-  if (!syncStates.has(b)) syncStates.set(b, { last: Date.now(), syncing: true });
+  if (!connectedAt.has(b)) connectedAt.set(b, Date.now());
   return b;
+}
+
+export function useSyncState(): SyncState {
+  const b = useBackend();
+  const syncing = useIsMutating({ mutationKey: SYNC }) > 0;
+  // The initial load (and a view's first load) is synced data being fetched for the first time.
+  const loading = useIsFetching({ predicate: (q) => isSynced(q) && q.state.dataUpdatedAt === 0 }) > 0;
+  const synced = useMutationState({ filters: { mutationKey: SYNC, status: 'success' }, select: (m) => m.state.submittedAt });
+  return { syncing: syncing || loading, last: synced.length ? Math.max(...synced) : connectedAt.get(b)! };
 }
 
 type Counts = Record<string, number>;
@@ -204,6 +175,33 @@ export function useActions(): Actions {
     [qc],
   );
 
+  const { mutate: write } = useMutation({ mutationKey: WRITE, mutationFn: (send: () => Promise<void>) => send(), onError: resync });
+
+  // Reload everything from the server. The server fetches feeds on its own schedule; this doesn't ask it to.
+  const { mutateAsync: runSync } = useMutation({
+    mutationKey: SYNC,
+    // Kept for the session: the last successful one says when you last synced.
+    gcTime: Infinity,
+    mutationFn: async () => {
+      // Wait for your changes to reach the server first. A change made while the reload runs is
+      // overwritten by it, so then wait for that one too and reload again (a few times at most).
+      for (let i = 0; i < 3; i++) {
+        await writesSettled(qc);
+        const reloadAt = Date.now();
+        // Lists on screen reload now (every loaded page); the others reload when you next open them.
+        await qc.invalidateQueries({ predicate: isSynced });
+        const wroteMeanwhile = qc
+          .getMutationCache()
+          .findAll({ mutationKey: WRITE })
+          .some((m) => m.state.submittedAt >= reloadAt);
+        if (!wroteMeanwhile) break;
+      }
+      const failed = qc.getQueryCache().findAll({ type: 'active', predicate: isSynced }).find((q) => q.state.status === 'error');
+      if (failed) throw failed.state.error;
+    },
+    onError: (err) => toast(describeError(err), 'error'),
+  });
+
   const setRead = useCallback(
     (entries: Entry[], read: boolean) => {
       const changing = entries.filter((e) => e.read !== read);
@@ -213,9 +211,9 @@ export function useActions(): Actions {
       for (const e of changing) deltas[e.feedId] = (deltas[e.feedId] ?? 0) + (read ? -1 : 1);
       patchEntries(qc, (e) => (ids.has(e.id) ? { ...e, read } : e));
       bump(qc, keys.unread, deltas);
-      trackWrite(() => b.setRead(changing, read)).catch(resync);
+      write(() => b.setRead(changing, read));
     },
-    [b, qc, resync],
+    [b, qc, write],
   );
 
   const setStarred = useCallback(
@@ -223,39 +221,15 @@ export function useActions(): Actions {
       if (entry.starred === starred) return;
       patchEntries(qc, (e) => (e.id === entry.id ? { ...e, starred } : e));
       bump(qc, keys.starred, { [entry.feedId]: starred ? 1 : -1 });
-      trackWrite(() => b.setStarred(entry, starred)).catch(resync);
+      write(() => b.setStarred(entry, starred));
     },
-    [b, qc, resync],
+    [b, qc, write],
   );
 
-  // Reload everything from the server. The server fetches feeds on its own schedule; this doesn't ask it to.
   const sync = useCallback(async () => {
-    if (syncStates.get(b)!.syncing) return; // one at a time (the initial load included)
-    updateSync(b, { syncing: true });
-    try {
-      const startedAt = Date.now();
-      // Wait for your changes to reach the server first. A change made while the reload runs is
-      // overwritten by it, so then wait for that one too and reload again (a few times at most).
-      for (let i = 0; i < 3; i++) {
-        await pendingWrites.settled();
-        const started = pendingWrites.started;
-        // Lists on screen reload now (every loaded page); the others reload when you next open them.
-        await qc.invalidateQueries({ predicate: (q) => SYNCED.has(q.queryKey[0] as string) });
-        if (pendingWrites.started === started) break;
-      }
-      const failed = qc
-        .getQueryCache()
-        .findAll({ type: 'active', predicate: (q) => SYNCED.has(q.queryKey[0] as string) })
-        .find((q) => q.state.status === 'error' && q.state.errorUpdatedAt >= startedAt);
-      if (failed) {
-        toast(describeError(failed.state.error), 'error');
-        return;
-      }
-      updateSync(b, { last: startedAt });
-    } finally {
-      updateSync(b, { syncing: false });
-    }
-  }, [b, qc]);
+    if (qc.isMutating({ mutationKey: SYNC }) > 0) return; // one at a time
+    await runSync().catch(() => {}); // failures are shown by onError
+  }, [qc, runSync]);
 
   const subscribe = useCallback(
     async (url: string, category: CategoryChoice) => {
