@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
 import { connectionLabel } from '../api';
 import type { Feed, Filter, Scope } from '../api/types';
-import { useActions, useSidebarCounts, useSidebarModel, useUnreadCounts } from '../hooks/data';
+import { useActions, useSidebarCounts, useSidebarModel, useSyncState } from '../hooks/data';
 import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
@@ -111,14 +111,14 @@ function FeedRow({ feed, href, selected, active, count, touch, onPick, onMenu }:
 export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const model = useSidebarModel();
   const { counts, ready: countsReady } = useSidebarCounts(filter);
-  const unread = useUnreadCounts();
   const { sync, unsubscribe } = useActions();
   const { open, toggle, ensure } = useOpenCategories();
-  const [refreshing, setRefreshing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [menu, setMenu] = useState<FeedMenuState | null>(null);
   const [confirming, setConfirming] = useState<Feed | null>(null);
-  const synced = useRelativeTime(unread.dataUpdatedAt);
+  // Shared by every sidebar (desktop and the phone drawer), and covers the initial load too.
+  const { last, syncing } = useSyncState();
+  const synced = useRelativeTime(last);
   const account = connectionLabel(connection);
 
   // Reveal the selected feed when something else (e.g. mark-all-read advancing) selects it.
@@ -281,18 +281,14 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         </button>
         {/* Sync, with when it last happened. */}
         <button
-          aria-label={refreshing ? 'Syncing' : `Sync with server, last synced ${synced}`}
-          title={`Sync with server (last synced ${synced})`}
-          disabled={refreshing}
-          onClick={async () => {
-            setRefreshing(true);
-            await sync();
-            setRefreshing(false);
-          }}
+          aria-label={syncing ? 'Syncing' : `Sync with server, last synced ${synced}`}
+          title={syncing ? 'Syncing…' : `Sync with server (last synced ${synced})`}
+          disabled={syncing}
+          onClick={() => void sync()}
           className={`ml-auto flex ${touch ? 'h-11' : 'h-[38px]'} flex-none items-center gap-1.5 rounded-lg px-2.5 text-xs whitespace-nowrap text-muted2 hover:bg-seg-bg`}
         >
-          <RefreshCw size={18} aria-hidden className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? 'syncing…' : synced}
+          <RefreshCw size={18} aria-hidden className={syncing ? 'animate-spin' : ''} />
+          {syncing ? 'syncing…' : synced}
         </button>
         <ThemeButton size={touch ? 44 : 38} />
       </div>

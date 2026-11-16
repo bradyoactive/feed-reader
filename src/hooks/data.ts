@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
   useInfiniteQuery,
   useQuery,
@@ -13,8 +13,44 @@ import { toast } from '../lib/toast';
 
 export const BackendContext = createContext<Backend | null>(null);
 
-/** When each connection last synced. The first use counts as a sync: the initial load fetches everything. */
-const lastSync = new WeakMap<Backend, number>();
+export interface SyncState {
+  /** When this connection last synced: the start of the initial load, or of the last Sync that succeeded. */
+  last: number;
+  /** True from the start of a sync (the initial load counts as one) until everything it reloads is in. */
+  syncing: boolean;
+}
+
+/** Per connection. The first use counts as a sync: the initial load fetches everything. */
+const syncStates = new WeakMap<Backend, SyncState>();
+const syncListeners = new Set<() => void>();
+
+function updateSync(b: Backend, patch: Partial<SyncState>) {
+  syncStates.set(b, { ...syncStates.get(b)!, ...patch });
+  syncListeners.forEach((l) => l());
+}
+
+export function useSyncState(): SyncState {
+  const b = useBackend();
+  return useSyncExternalStore(
+    (cb) => {
+      syncListeners.add(cb);
+      return () => syncListeners.delete(cb);
+    },
+    () => syncStates.get(b)!,
+  );
+}
+
+/** Ends the initial load's "syncing" once `done` (the first counts, feeds and articles are in). */
+export function useInitialLoadDone(done: boolean) {
+  const b = useBackend();
+  useEffect(() => {
+    if (done && syncStates.get(b)!.syncing && !initialDone.has(b)) {
+      initialDone.add(b);
+      updateSync(b, { syncing: false });
+    }
+  }, [b, done]);
+}
+const initialDone = new WeakSet<Backend>();
 /** When you last changed each entry here, so a sync doesn't overwrite a change still on its way to the server. */
 const localEdits = new Map<string, number>();
 /** Local changes this recent win over what a sync reports. */
@@ -34,7 +70,7 @@ function noteLocalEdit(ids: Iterable<string>) {
 export function useBackend(): Backend {
   const b = useContext(BackendContext);
   if (!b) throw new Error('useBackend outside BackendContext');
-  if (!lastSync.has(b)) lastSync.set(b, Date.now());
+  if (!syncStates.has(b)) syncStates.set(b, { last: Date.now(), syncing: true });
   return b;
 }
 
@@ -67,14 +103,17 @@ export function useFeeds() {
   });
 }
 
+// Counts load once, then change only with what you do here (optimistically) and when you press Sync:
+// never on a timer, and not again when another part of the screen starts showing them.
+
 export function useUnreadCounts() {
   const b = useBackend();
-  return useQuery({ queryKey: keys.unread, queryFn: () => b.getUnreadCounts(), refetchInterval: 5 * 60_000 });
+  return useQuery({ queryKey: keys.unread, queryFn: () => b.getUnreadCounts(), staleTime: Infinity });
 }
 
 export function useStarredCounts(enabled: boolean) {
   const b = useBackend();
-  return useQuery({ queryKey: keys.starred, queryFn: () => b.getStarredCounts(), enabled });
+  return useQuery({ queryKey: keys.starred, queryFn: () => b.getStarredCounts(), enabled, staleTime: Infinity });
 }
 
 /** Feed ids a scope covers. */
@@ -210,28 +249,36 @@ export function useActions(): Actions {
   // Pull what changed on the server since the last sync. The server fetches feeds on its own schedule;
   // this doesn't ask it to.
   const sync = useCallback(async () => {
-    const startedAt = Date.now();
-    let changes: Changes;
+    const state = syncStates.get(b)!;
+    if (state.syncing) return; // one at a time (the initial load included)
+    updateSync(b, { syncing: true });
     try {
-      changes = await b.getChanges((lastSync.get(b) ?? startedAt) - SYNC_OVERLAP);
-    } catch (err) {
-      toast(describeError(err), 'error');
-      return;
+      const startedAt = Date.now();
+      let changes: Changes;
+      try {
+        changes = await b.getChanges(state.last - SYNC_OVERLAP);
+      } catch (err) {
+        toast(describeError(err), 'error');
+        return;
+      }
+      if (changes.truncated) {
+        await qc.invalidateQueries();
+        updateSync(b, { last: startedAt });
+        toast('A lot changed since the last sync, so everything was reloaded.');
+        return;
+      }
+      const newCount = applyChanges(qc, changes, (id) => (localEdits.get(id) ?? 0) >= startedAt - LOCAL_EDIT_GRACE);
+      // Counts and the feed list are small: reload them outright.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['counts'] }),
+        qc.invalidateQueries({ queryKey: keys.feeds }),
+        qc.invalidateQueries({ queryKey: keys.categories }),
+      ]);
+      updateSync(b, { last: startedAt });
+      toast(newCount ? `${newCount} new article${newCount === 1 ? '' : 's'}` : 'Up to date');
+    } finally {
+      updateSync(b, { syncing: false });
     }
-    lastSync.set(b, startedAt);
-    if (changes.truncated) {
-      await qc.invalidateQueries();
-      toast('A lot changed since the last sync, so everything was reloaded.');
-      return;
-    }
-    const newCount = applyChanges(qc, changes, (id) => (localEdits.get(id) ?? 0) >= startedAt - LOCAL_EDIT_GRACE);
-    // Counts and the feed list are small: reload them outright.
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ['counts'] }),
-      qc.invalidateQueries({ queryKey: keys.feeds }),
-      qc.invalidateQueries({ queryKey: keys.categories }),
-    ]);
-    toast(newCount ? `${newCount} new article${newCount === 1 ? '' : 's'}` : 'Up to date');
   }, [b, qc]);
 
   const subscribe = useCallback(
@@ -327,7 +374,7 @@ export function applyChanges(qc: QueryClient, changes: Changes, keepLocal: (id: 
 
 export function useTotalCounts(enabled: boolean) {
   const b = useBackend();
-  return useQuery({ queryKey: keys.total, queryFn: () => b.getTotalCounts(), enabled });
+  return useQuery({ queryKey: keys.total, queryFn: () => b.getTotalCounts(), enabled, staleTime: Infinity });
 }
 
 /**
