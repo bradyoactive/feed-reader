@@ -33,6 +33,9 @@ export interface Entry {
   starred: boolean;
 }
 
+/** What a write needs to know about an article. Unsent writes are saved, so they carry no more than this. */
+export type EntryRef = Pick<Entry, 'id' | 'feedId'>;
+
 /** Category id for feeds outside any category/folder. */
 export const UNCATEGORIZED = '__uncategorized';
 
@@ -71,8 +74,8 @@ export interface Backend {
   /** Total (read + unread) counts keyed by feed id, or null when the server can't report them. */
   getTotalCounts(): Promise<Record<string, number> | null>;
   getEntries(query: EntryQuery): Promise<EntryPage>;
-  setRead(entries: Entry[], read: boolean): Promise<void>;
-  setStarred(entry: Entry, starred: boolean): Promise<void>;
+  setRead(entries: EntryRef[], read: boolean): Promise<void>;
+  setStarred(entry: EntryRef, starred: boolean): Promise<void>;
   /** Subscribes to a feed address in a category. Returns the new feed's id. */
   subscribe(url: string, category: CategoryChoice): Promise<string>;
   /** Removes a feed. The server deletes its articles too. */

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider, type Query } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider, type Mutation, type Query } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createBackend } from './api';
 import { AuthError, isNetworkError } from './api/types';
@@ -7,6 +7,7 @@ import { ConnectScreen } from './components/ConnectScreen';
 import { Reader } from './components/Reader';
 import { Toasts } from './components/Toasts';
 import { BackendContext } from './hooks/data';
+import { registerWrites, WRITE } from './hooks/writes';
 import { cacheKey, clearConnection, loadConnection, saveConnection, type ConnectionConfig } from './lib/storage';
 import { idbPersister } from './lib/persist';
 import { navigate, useRoute } from './lib/route';
@@ -25,6 +26,8 @@ const persistOptions = (config: ConnectionConfig) => ({
   buster: 'offline-1',
   dehydrateOptions: {
     shouldDehydrateQuery: (q: Query) => q.state.data !== undefined && PERSISTED.has(q.queryKey[0] as string),
+    // Every change not yet confirmed by the server, waiting or on its way.
+    shouldDehydrateMutation: (m: Mutation) => m.state.status === 'pending' && m.options.mutationKey?.[0] === WRITE[0],
   },
 });
 
@@ -50,11 +53,14 @@ export function App() {
           // Always try the server (navigator.onLine can't be trusted), and fall back to saved data.
           networkMode: 'offlineFirst',
         },
-        // Writes and syncs fail straight away offline (as fetch does) rather than pausing, so Sync never waits forever.
+        // Sync and subscribing fail straight away offline (as fetch does) rather than pausing, so they never
+        // wait forever. Read/star writes pause instead (their own defaults, in registerWrites).
         mutations: { networkMode: 'always' },
       },
     });
-    return { backend: createBackend(config), client, persist: config.kind === 'demo' ? null : persistOptions(config) };
+    const backend = createBackend(config);
+    registerWrites(client, backend);
+    return { backend, client, persist: config.kind === 'demo' ? null : persistOptions(config) };
   }, [config]);
 
   const connect = (next: ConnectionConfig, remember: boolean) => {
@@ -87,7 +93,12 @@ export function App() {
       ) : (
         <BackendContext.Provider value={session.backend}>
           {session.persist ? (
-            <PersistQueryClientProvider client={session.client} persistOptions={session.persist}>
+            <PersistQueryClientProvider
+              client={session.client}
+              persistOptions={session.persist}
+              // Changes saved while offline (or mid-send when the app closed) go to the server now.
+              onSuccess={() => session.client.resumePausedMutations()}
+            >
               <Reader connection={config!} />
             </PersistQueryClientProvider>
           ) : (

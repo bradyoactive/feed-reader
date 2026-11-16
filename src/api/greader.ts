@@ -2,7 +2,7 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle, safeUrl } from '../lib/html';
 import { joinUrl, request, responseError, send } from './http';
 import { AuthError, UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
 
 const PAGE_SIZE = 50;
 const READING_LIST = 'user/-/state/com.google/reading-list';
@@ -251,13 +251,13 @@ export class GReaderBackend implements Backend {
     return { entries, nextCursor: c };
   }
 
-  async setRead(entries: Entry[], read: boolean): Promise<void> {
+  async setRead(entries: EntryRef[], read: boolean): Promise<void> {
     for (const batch of chunks(entries, 100)) {
       await this.post('/reader/api/0/edit-tag', [...batch.map((e) => ['i', e.id] as [string, string]), [read ? 'a' : 'r', READ]]);
     }
   }
 
-  async setStarred(entry: Entry, starred: boolean): Promise<void> {
+  async setStarred(entry: EntryRef, starred: boolean): Promise<void> {
     await this.post('/reader/api/0/edit-tag', [['i', entry.id], [starred ? 'a' : 'r', STARRED]]);
   }
 }

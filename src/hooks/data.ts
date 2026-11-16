@@ -8,14 +8,13 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
-  type InfiniteData,
-  type QueryClient,
 } from '@tanstack/react-query';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
 import { describeError, UNCATEGORIZED } from '../api/types';
-import { tally } from '../lib/collections';
+import { retryConnection } from '../lib/network';
 import { scopeKey, setRouteNames } from '../lib/route';
 import { toast } from '../lib/toast';
+import { patchCounts, patchPages, showWrite, WRITE, writesSettled, type Write } from './writes';
 
 export const BackendContext = createContext<Backend | null>(null);
 
@@ -33,27 +32,11 @@ export interface SyncState {
 const recentlyAdded = new Set<string>();
 export const isRecentlyAdded = (feedId: string) => recentlyAdded.has(feedId);
 
-/** Server writes for changes made here (read, star) run as mutations under this key, so Sync can wait for them. */
-const WRITE = ['write'];
 const SYNC = ['sync'];
 
 /** What Sync reloads: everything from the server except feed icons. */
 const SYNCED = new Set(['categories', 'feeds', 'counts', 'entries']);
 const isSynced = (q: { queryKey: readonly unknown[] }) => SYNCED.has(q.queryKey[0] as string);
-
-/** Resolves once no write is on its way to the server (including ones started while waiting). */
-export function writesSettled(qc: QueryClient): Promise<void> {
-  return new Promise((resolve) => {
-    let unsubscribe = () => {};
-    const check = () => {
-      if (qc.isMutating({ mutationKey: WRITE }) > 0) return;
-      unsubscribe();
-      resolve();
-    };
-    unsubscribe = qc.getMutationCache().subscribe(check);
-    check();
-  });
-}
 
 /** When each connection was opened: the initial load counts as its first sync. */
 const connectedAt = new WeakMap<Backend, number>();
@@ -167,29 +150,6 @@ export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefin
   });
 }
 
-/** Rewrites every page of every cached article list. */
-function patchPages(qc: QueryClient, fn: (entries: Entry[]) => Entry[]) {
-  qc.setQueriesData<InfiniteData<EntryPage>>({ queryKey: ['entries'] }, (data) =>
-    data && { ...data, pages: data.pages.map((p) => ({ ...p, entries: fn(p.entries) })) },
-  );
-}
-
-/** Changes a copy of the cached counts under `key` (every kind of count for ['counts']), if loaded. */
-function patchCounts(qc: QueryClient, key: readonly unknown[], fn: (counts: Counts) => void) {
-  qc.setQueriesData<Counts | null>({ queryKey: key }, (old) => {
-    if (!old) return old;
-    const next = { ...old };
-    fn(next);
-    return next;
-  });
-}
-
-function bump(qc: QueryClient, key: readonly unknown[], deltas: Counts) {
-  patchCounts(qc, key, (c) => {
-    for (const [feed, d] of Object.entries(deltas)) c[feed] = Math.max(0, (c[feed] ?? 0) + d);
-  });
-}
-
 export interface Actions {
   setRead(entries: Entry[], read: boolean): void;
   setStarred(entry: Entry, starred: boolean): void;
@@ -201,8 +161,9 @@ export interface Actions {
 }
 
 /**
- * Every write updates the screen first, then tells the server.
- * If the server call fails, everything is reloaded from the server so the screen is honest again.
+ * Every write updates the screen first, then tells the server (see hooks/writes: without a connection,
+ * changes wait and are sent later). If the server refuses one, everything is reloaded from the server so
+ * the screen is honest again.
  */
 export function useActions(): Actions {
   const b = useBackend();
@@ -216,13 +177,16 @@ export function useActions(): Actions {
     [qc],
   );
 
-  const { mutate: write } = useMutation({ mutationKey: WRITE, mutationFn: (send: () => Promise<void>) => send(), onError: resync });
+  // How to send is set per connection with setMutationDefaults (registerWrites), so saved writes can resume.
+  const { mutate: write } = useMutation<void, Error, Write>({ mutationKey: WRITE });
 
   // Reload everything from the server. The server fetches feeds on its own schedule; this doesn't ask it to.
   const { mutateAsync: runSync } = useMutation({
     mutationKey: SYNC,
     mutationFn: async () => {
       const startedAt = Date.now();
+      // Pressing Sync is a good moment to find out whether the connection is back: unsent changes go now.
+      retryConnection();
       // Wait for your changes to reach the server first. A change made while the reload runs is
       // overwritten by it, so then wait for that one too and reload again (a few times at most).
       for (let i = 0; i < 3; i++) {
@@ -247,22 +211,21 @@ export function useActions(): Actions {
     (entries: Entry[], read: boolean) => {
       const changing = entries.filter((e) => e.read !== read);
       if (changing.length === 0) return;
-      const ids = new Set(changing.map((e) => e.id));
-      patchPages(qc, (es) => es.map((e) => (ids.has(e.id) ? { ...e, read } : e)));
-      bump(qc, keys.unread, tally(changing, (e) => e.feedId, {}, read ? -1 : 1));
-      write(() => b.setRead(changing, read));
+      const w: Write = { field: 'read', entries: changing.map(({ id, feedId }) => ({ id, feedId })), value: read };
+      showWrite(qc, w);
+      write(w);
     },
-    [b, qc, write],
+    [qc, write],
   );
 
   const setStarred = useCallback(
     (entry: Entry, starred: boolean) => {
       if (entry.starred === starred) return;
-      patchPages(qc, (es) => es.map((e) => (e.id === entry.id ? { ...e, starred } : e)));
-      bump(qc, keys.starred, { [entry.feedId]: starred ? 1 : -1 });
-      write(() => b.setStarred(entry, starred));
+      const w: Write = { field: 'starred', entries: [{ id: entry.id, feedId: entry.feedId }], value: starred };
+      showWrite(qc, w);
+      write(w);
     },
-    [b, qc, write],
+    [qc, write],
   );
 
   const sync = useCallback(async () => {

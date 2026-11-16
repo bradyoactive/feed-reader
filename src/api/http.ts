@@ -1,4 +1,5 @@
-import { AuthError, HttpError } from './types';
+import { noteNetworkFailure, noteNetworkSuccess } from '../lib/network';
+import { AuthError, HttpError, isNetworkError } from './types';
 
 /** A typed address with https:// added when it has no scheme ("example.com/feed" → "https://example.com/feed"). */
 export function withScheme(address: string): string {
@@ -21,9 +22,19 @@ export function readableError(body: string): string {
   return body.slice(0, 200);
 }
 
-/** fetch for API calls: never sends cookies, never answered from the HTTP cache. */
-export function send(url: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(url, { ...init, credentials: 'omit', cache: 'no-store' });
+/**
+ * fetch for API calls: never sends cookies, never answered from the HTTP cache. Reports whether the server
+ * answered at all, which is how Skim knows it's offline (see lib/network).
+ */
+export async function send(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    const res = await fetch(url, { ...init, credentials: 'omit', cache: 'no-store' });
+    noteNetworkSuccess();
+    return res;
+  } catch (err) {
+    if (isNetworkError(err)) noteNetworkFailure();
+    throw err;
+  }
 }
 
 /** The error for a response that isn't ok: AuthError when the login was refused, else HttpError with the server's reason. */

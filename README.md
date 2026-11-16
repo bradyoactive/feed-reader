@@ -54,7 +54,9 @@ To redraw the icons after changing `public/logo.svg`, run `npm run icons`.
 | Piece | Where |
 | --- | --- |
 | API clients behind one `Backend` interface | `src/api/miniflux.ts`, `src/api/greader.ts`, `src/api/demo.ts` |
-| Data fetching, caching, optimistic read/star updates | `src/hooks/data.ts` (TanStack Query) |
+| Data fetching, caching | `src/hooks/data.ts` (TanStack Query) |
+| Read/star changes: shown at once, queued and saved while offline | `src/hooks/writes.ts`, `src/lib/network.ts` |
+| Saved cache (IndexedDB) | `src/lib/persist.ts`, `src/lib/idb.ts` |
 | Virtualised list grouped by day | `src/components/ArticleList.tsx` (react-virtuoso) |
 | Sidebar, phone drawer, resizable divider | `src/components/Sidebar.tsx`, `Reader.tsx`, `Resizer.tsx` |
 | Theme tokens (light/dark, follows the system) | `src/index.css` |
@@ -63,6 +65,8 @@ Behaviour worth knowing:
 
 - Lists are snapshots: items you mark read stay visible (dimmed) until you change view or sync, so nothing jumps
   under the cursor. The sidebar keeps feeds listed for the same reason.
+- Marking articles read or starred works without a connection: the change shows at once, is saved on the
+  device, and is sent (in order) when the server can be reached again, even after closing the app.
 - **Sync** waits for your changes to reach the server, then reloads everything from it: counts, feeds and the lists
   on screen (every page you've loaded). Nothing reloads on its own; your server fetches feeds on its own schedule.
 - **Read above / below** act on the articles loaded in the current view, in on-screen order.

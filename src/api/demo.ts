@@ -1,5 +1,5 @@
 import { tally } from '../lib/collections';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -160,13 +160,13 @@ export class DemoBackend implements Backend {
     return { entries: page, nextCursor: start + 20 < matching.length ? String(start + 20) : undefined };
   }
 
-  async setRead(entries: Entry[], read: boolean) {
+  async setRead(entries: EntryRef[], read: boolean) {
     await wait(80);
     const ids = new Set(entries.map((e) => e.id));
     this.entries.forEach((e) => ids.has(e.id) && (e.read = read));
   }
 
-  async setStarred(entry: Entry, starred: boolean) {
+  async setStarred(entry: EntryRef, starred: boolean) {
     await wait(80);
     const e = this.entries.find((x) => x.id === entry.id);
     if (e) e.starred = starred;

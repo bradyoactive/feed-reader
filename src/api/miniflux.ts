@@ -2,7 +2,7 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed, Filter, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed, Filter, Scope } from './types';
 
 const PAGE_SIZE = 50;
 
@@ -198,7 +198,7 @@ export class MinifluxBackend implements Backend {
     await this.call(`/v1/feeds/${feedId}`, { method: 'DELETE' });
   }
 
-  async setRead(entries: Entry[], read: boolean): Promise<void> {
+  async setRead(entries: EntryRef[], read: boolean): Promise<void> {
     for (const batch of chunks(entries, 500)) {
       await this.call('/v1/entries', {
         method: 'PUT',
@@ -207,7 +207,7 @@ export class MinifluxBackend implements Backend {
     }
   }
 
-  async setStarred(entry: Entry, starred: boolean): Promise<void> {
+  async setStarred(entry: EntryRef, starred: boolean): Promise<void> {
     // Sets the state outright (Miniflux 2.3.2+), so it's right whatever another device did meanwhile.
     await this.call('/v1/entries', { method: 'PUT', body: JSON.stringify({ entry_ids: [Number(entry.id)], starred }) });
   }

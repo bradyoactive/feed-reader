@@ -1,6 +1,18 @@
 import type { PersistedClient, Persister } from '@tanstack/react-query-persist-client';
 import { idbDelete, idbGet, idbSet } from './idb';
 
+/**
+ * A write that was being sent when the cache was saved may never have arrived. It's saved as paused, so
+ * after a restart it's sent again (as paused ones are) rather than left pending forever. Sending a change
+ * twice is harmless: each sets a state outright.
+ */
+export function markPendingPaused(client: PersistedClient): PersistedClient {
+  const mutations = client.clientState.mutations.map((m) =>
+    m.state.status === 'pending' && !m.state.isPaused ? { ...m, state: { ...m.state, isPaused: true } } : m,
+  );
+  return { ...client, clientState: { ...client.clientState, mutations } };
+}
+
 /** How long after the last change the cache is written out (writes are coalesced). */
 const THROTTLE_MS = 1000;
 
@@ -33,7 +45,7 @@ export function idbPersister(key: string): Persister {
 
   return {
     persistClient(client) {
-      latest = client;
+      latest = markPendingPaused(client);
       timer ??= setTimeout(flush, THROTTLE_MS);
     },
     restoreClient: () => idbGet<PersistedClient>(key).catch(() => undefined),
