@@ -6,7 +6,7 @@ import { useActions, useSidebarCounts, useSidebarModel, useSyncState } from '../
 import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
-import { FeedMenu, UnsubscribeConfirm, useFeedPress, type FeedMenuState } from './FeedMenu';
+import { FeedMenu, UnsubscribeConfirm } from './FeedMenu';
 import { loadPref, loadTheme, savePref, saveTheme, type ConnectionConfig, type Theme } from '../lib/storage';
 
 interface Props {
@@ -79,32 +79,32 @@ interface FeedRowProps {
   feed: Feed;
   href: string;
   selected: boolean;
-  /** Its menu or confirmation is open. */
-  active: boolean;
+  /** Its unsubscribe confirmation is open. */
+  confirming: boolean;
   count: string;
   touch?: boolean;
   onPick?: () => void;
-  onMenu(state: FeedMenuState): void;
+  onUnsubscribe(feed: Feed): void;
 }
 
 /** A feed in the sidebar. Right-click or long-press opens its menu. */
-function FeedRow({ feed, href, selected, active, count, touch, onPick, onMenu }: FeedRowProps) {
-  const press = useFeedPress(onMenu, feed);
+function FeedRow({ feed, href, selected, confirming, count, touch, onPick, onUnsubscribe }: FeedRowProps) {
   return (
-    <a
-      href={href}
-      onClick={() => onPick?.()}
-      {...press}
-      aria-current={selected ? 'page' : undefined}
-      // No iOS link preview or text selection on long-press.
-      className={`flex ${touch ? 'h-11 rounded-full' : 'h-[34px] rounded-lg'} items-center gap-2.5 px-2.5 text-[13.5px] no-underline select-none [-webkit-touch-callout:none] ${
-        selected ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
-      } ${active ? 'ring-[1.5px] ring-accent ring-inset' : ''}`}
-    >
-      <FeedIcon feed={feed} feedId={feed.id} className="h-[18px] w-[18px] rounded-[5px]" letterClass="text-[10px]" />
-      <span className="min-w-0 flex-1 truncate">{feed.title}</span>
-      <span className="text-xs text-muted">{count}</span>
-    </a>
+    <FeedMenu feed={feed} onUnsubscribe={onUnsubscribe}>
+      <a
+        href={href}
+        onClick={() => onPick?.()}
+        aria-current={selected ? 'page' : undefined}
+        // No text selection on long-press; the menu trigger also turns off the iOS link preview.
+        className={`flex ${touch ? 'h-11 rounded-full' : 'h-[34px] rounded-lg'} items-center gap-2.5 px-2.5 text-[13.5px] no-underline select-none data-[state=open]:ring-[1.5px] data-[state=open]:ring-accent data-[state=open]:ring-inset ${
+          selected ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
+        } ${confirming ? 'ring-[1.5px] ring-accent ring-inset' : ''}`}
+      >
+        <FeedIcon feed={feed} feedId={feed.id} className="h-[18px] w-[18px] rounded-[5px]" letterClass="text-[10px]" />
+        <span className="min-w-0 flex-1 truncate">{feed.title}</span>
+        <span className="text-xs text-muted">{count}</span>
+      </a>
+    </FeedMenu>
   );
 }
 
@@ -114,7 +114,6 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const { sync, unsubscribe } = useActions();
   const { open, toggle, ensure } = useOpenCategories();
   const [adding, setAdding] = useState(false);
-  const [menu, setMenu] = useState<FeedMenuState | null>(null);
   const [confirming, setConfirming] = useState<Feed | null>(null);
   // Shared by every sidebar (desktop and the phone drawer), and covers the initial load too.
   const { last, syncing } = useSyncState();
@@ -176,7 +175,6 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         filter={filter}
         onSubscribed={onPick}
       />
-      {menu && <FeedMenu state={menu} onClose={() => setMenu(null)} onUnsubscribe={(f) => (setMenu(null), setConfirming(f))} />}
       {confirming && (
         <UnsubscribeConfirm
           feed={confirming}
@@ -250,11 +248,11 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
                         feed={f}
                         href={routeHash({ kind: 'feed', id: f.id }, filter)}
                         selected={isSel({ kind: 'feed', id: f.id })}
-                        active={menu?.feed.id === f.id || confirming?.id === f.id}
+                        confirming={confirming?.id === f.id}
                         count={blank(counts[f.id])}
                         touch={touch}
                         onPick={onPick}
-                        onMenu={setMenu}
+                        onUnsubscribe={setConfirming}
                       />
                     ))}
                   </div>
