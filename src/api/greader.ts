@@ -1,6 +1,6 @@
 import { parseArticle, safeUrl } from '../lib/html';
-import { joinUrl, readableError, request } from './http';
-import { AuthError, HttpError, UNCATEGORIZED } from './types';
+import { joinUrl, request, responseError, send } from './http';
+import { AuthError, UNCATEGORIZED } from './types';
 import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, Feed } from './types';
 
 const PAGE_SIZE = 50;
@@ -120,23 +120,14 @@ export class GReaderBackend implements Backend {
     for (let attempt = 0; attempt < 2; attempt++) {
       const body = new URLSearchParams(params);
       body.set('T', await this.token(attempt > 0));
-      const res = await fetch(joinUrl(this.config.url, path), {
+      const res = await send(joinUrl(this.config.url, path), {
         method: 'POST',
-        credentials: 'omit',
         headers: { ...this.headers(), 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
       });
       if (res.ok) return res.text();
-      const badToken = res.headers.get('X-Reader-Google-Bad-Token') === 'true';
-      if (res.status === 401 && badToken && attempt === 0) continue;
-      if (res.status === 401 || res.status === 403) throw new AuthError();
-      let detail = res.statusText;
-      try {
-        detail = readableError(await res.text()) || detail;
-      } catch {
-        /* keep statusText */
-      }
-      throw new HttpError(res.status, detail);
+      const badToken = res.status === 401 && res.headers.get('X-Reader-Google-Bad-Token') === 'true';
+      if (!badToken || attempt > 0) throw await responseError(res);
     }
     throw new AuthError();
   }

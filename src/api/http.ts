@@ -16,20 +16,27 @@ export function readableError(body: string): string {
   return body.slice(0, 200);
 }
 
+/** fetch for API calls: never sends cookies, never answered from the HTTP cache. */
+export function send(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, credentials: 'omit', cache: 'no-store' });
+}
+
+/** The error for a response that isn't ok: AuthError when the login was refused, else HttpError with the server's reason. */
+export async function responseError(res: Response): Promise<Error> {
+  if (res.status === 401 || res.status === 403) return new AuthError();
+  let detail = res.statusText;
+  try {
+    const body = await res.text();
+    if (body) detail = readableError(body);
+  } catch {
+    /* keep statusText */
+  }
+  return new HttpError(res.status, detail);
+}
+
+/** send, throwing responseError for anything but a success. */
 export async function request(url: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(url, { ...init, credentials: 'omit', cache: 'no-store' });
-  if (res.status === 401 || res.status === 403) {
-    throw new AuthError();
-  }
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.text();
-      if (body) detail = readableError(body);
-    } catch {
-      /* keep statusText */
-    }
-    throw new HttpError(res.status, detail);
-  }
+  const res = await send(url, init);
+  if (!res.ok) throw await responseError(res);
   return res;
 }
