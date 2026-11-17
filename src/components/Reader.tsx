@@ -64,7 +64,6 @@ function nextScope(scope: Scope, model: SidebarModel, has: (feedId: string) => b
   return null;
 }
 
-/** Unread / All / Starred. Icons only on phones; icon and label on desktop. */
 /**
  * Swiping an article row left: the row follows the finger over a strip saying what will happen,
  * and past ~30% of the width (or with a flick) the read state flips as it snaps back.
@@ -100,6 +99,7 @@ function rowSwipe(row: HTMLElement, onCommit: () => void): SwipeSession | null {
   };
 }
 
+/** Unread / All / Starred. Icons only on phones; icon and label on desktop. */
 function FilterTabs({ filter, scope }: { filter: Filter; scope: Scope }) {
   return (
     <div role="group" aria-label="Show" className="flex flex-none gap-0.5 rounded-full bg-seg-bg p-[3px] md:rounded-[10px]">
@@ -234,11 +234,17 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       s.style.opacity = open ? '1' : '0';
     }
     const done = () => {
+      if (!open) {
+        // Leave the drawer parked off-screen: it unmounts on this state change, and clearing the
+        // inline transform first would flash it back fully open for a frame before it goes.
+        setDrawerDragging(false);
+        closeDrawer();
+        return;
+      }
       for (const el of [d, s]) el?.style.removeProperty('transition');
       d?.style.removeProperty('transform');
       s?.style.removeProperty('opacity');
       setDrawerDragging(false);
-      if (!open) closeDrawer();
     };
     if (d) animateTo(d, open ? 'translateX(0)' : 'translateX(-100%)', done);
     else done();

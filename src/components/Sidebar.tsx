@@ -203,7 +203,7 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
         <a
           {...link({ kind: 'all' })}
           aria-current={isSel({ kind: 'all' }) ? 'page' : undefined}
-          className={`flex ${rowH} items-center gap-2.5 ${radius} px-2.5 text-sm font-medium no-underline ${
+          className={`flex ${rowH} flex-none items-center gap-2.5 ${radius} px-2.5 text-sm font-medium no-underline ${
             isSel({ kind: 'all' }) ? 'bg-sel-bg text-sel-fg' : 'text-text hover:bg-seg-bg'
           }`}
         >
@@ -212,7 +212,7 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
           <span className="text-xs text-muted">{blank(total)}</span>
         </a>
 
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-none flex-col gap-0.5">
           <div className="px-2.5 pb-1.5 text-[11px] font-semibold tracking-[0.08em] text-muted uppercase">Categories</div>
           {!model && <div className="px-2.5 py-2 text-sm text-muted">Loading…</div>}
           {model?.categories.map((cat) => {
