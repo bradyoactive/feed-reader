@@ -1,6 +1,5 @@
 import type { GReaderConfig } from '../api/greader';
 import type { MinifluxConfig } from '../api/miniflux';
-import { idbDelete } from './idb';
 
 export type ConnectionConfig = MinifluxConfig | GReaderConfig | { kind: 'demo' };
 
@@ -34,16 +33,14 @@ function store(name: 'localStorage' | 'sessionStorage'): Storage | undefined {
 const local = store('localStorage');
 const session = store('sessionStorage');
 
-/** Where a connection's saved query cache (lists, counts, articles, icons and unsent changes) lives in IndexedDB. */
-export const cacheKey = (config: ConnectionConfig) => `skim.cache.${config.kind === 'demo' ? 'demo' : config.url}`;
-
 /** The IndexedDB database holding a connection's articles, feeds, counts and unsent changes. */
 export const databaseName = (config: ConnectionConfig) => `skim:${config.kind}:${config.kind === 'demo' ? '' : config.url}`;
 
-// Feed icons used to be cached one per key, and then the query cache was kept in localStorage;
-// it lives in IndexedDB now.
+// Feed icons used to be cached one per key, then the whole query cache was kept in localStorage, then in
+// one IndexedDB database ("skim") for every connection. Each connection has its own database now.
 try {
   for (const k of Object.keys(local ?? {})) if (k.startsWith('skim.icon.') || k.startsWith('skim.cache.')) local!.removeItem(k);
+  if (typeof indexedDB !== 'undefined') indexedDB.deleteDatabase('skim');
 } catch {
   /* nothing to tidy */
 }
@@ -68,7 +65,6 @@ export function saveConnection(config: ConnectionConfig, remember: boolean) {
 /** Signs out: forgets the connection and everything saved for it on this device. */
 export function clearConnection() {
   const config = loadConnection();
-  if (config) void idbDelete(cacheKey(config)).catch(() => {});
   if (config && config.kind !== 'demo') {
     try {
       indexedDB.deleteDatabase(databaseName(config));
