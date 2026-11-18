@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUp, CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import type { Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
 import {
@@ -15,13 +15,13 @@ import {
   useSyncOnLaunch,
   useSyncStatus,
   useUnreadCounts,
-  type SidebarModel,
 } from '../hooks/data';
 import { offlineLabel, useOnline } from '../lib/network';
 import { animateTo, useSwipe, type SwipeDirection, type SwipeSession } from '../hooks/swipe';
 import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } from '../lib/route';
+import { nextScope } from '../lib/scopes';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
-import { ArticleList } from './ArticleList';
+import { ArticleList, type NextView } from './ArticleList';
 import { clampSidebar, Resizer, SIDEBAR_DEFAULT } from './Resizer';
 import { Sheet } from './Sheet';
 import { Sidebar } from './Sidebar';
@@ -37,30 +37,6 @@ const EMPTY: Record<Filter, string> = {
   all: 'No articles here yet.',
   starred: 'No starred articles here.',
 };
-
-/**
- * After "Mark all read", the next feed or category (in sidebar order, wrapping around)
- * that still has something to show under the current filter.
- */
-function nextScope(scope: Scope, model: SidebarModel, has: (feedId: string) => boolean): Scope | null {
-  if (scope.kind === 'all') return null;
-  if (scope.kind === 'feed') {
-    const order = model.categories.flatMap((c) => model.feedsByCategory.get(c.id) ?? []).map((f) => f.id);
-    const i = order.indexOf(scope.id);
-    for (let k = 1; k < order.length; k++) {
-      const id = order[(i + k) % order.length];
-      if (has(id)) return { kind: 'feed', id };
-    }
-    return null;
-  }
-  const order = model.categories.map((c) => c.id);
-  const i = order.indexOf(scope.id);
-  for (let k = 1; k < order.length; k++) {
-    const id = order[(i + k) % order.length];
-    if ((model.feedsByCategory.get(id) ?? []).some((f) => has(f.id))) return { kind: 'category', id };
-  }
-  return null;
-}
 
 /**
  * Swiping an article row left: the row follows the finger over a strip saying what will happen,
@@ -93,6 +69,52 @@ function rowSwipe(row: HTMLElement, onCommit: () => void): SwipeSession | null {
       back.dataset.armed = String(-dx > threshold);
     },
     end: (dx, v) => settle(-dx > threshold || (v < -0.5 && dx < -40)),
+    cancel: () => settle(false),
+  };
+}
+
+/** How far (px) the list has to be pulled up past its end before letting go opens the next view. */
+const PULL_THRESHOLD = 72;
+
+/** True when the article list (or the empty message standing in for it) can't scroll any further down. */
+function atListEnd(container: HTMLElement): boolean {
+  const scroller = container.querySelector<HTMLElement>('[data-virtuoso-scroller]');
+  return !scroller || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+}
+
+/**
+ * Pulling the list up past its end: the list follows the finger at half speed over a hint naming
+ * the next view, and once it's moved PULL_THRESHOLD the hint says to let go. Letting go there opens
+ * the next view; anywhere short of it the list springs back. Nothing is marked read.
+ */
+function pullSession(content: HTMLElement, hint: HTMLElement, onCommit: () => void): SwipeSession {
+  content.style.transition = 'none';
+  hint.dataset.active = 'true';
+  let offset = 0;
+  const settle = (commit: boolean) => {
+    if (commit) {
+      // The new view slides in from below once it has rendered (see the layout effect in Reader).
+      content.dataset.pulled = 'true';
+      onCommit();
+      return;
+    }
+    animateTo(content, 'translateY(0)', () => {
+      content.style.transform = '';
+      content.style.transition = '';
+      hint.dataset.active = 'false';
+      hint.dataset.armed = 'false';
+    });
+  };
+  return {
+    move(dy) {
+      const pull = Math.max(0, -dy) / 2;
+      // Rubber-band past the threshold, so it's clear there's nothing more to pull.
+      offset = pull > PULL_THRESHOLD ? PULL_THRESHOLD + (pull - PULL_THRESHOLD) * 0.3 : pull;
+      content.style.transform = `translateY(${-offset}px)`;
+      hint.dataset.armed = String(offset >= PULL_THRESHOLD);
+    },
+    // Distance only, no flick: a quick flick at the end of a long scroll shouldn't change views by accident.
+    end: () => settle(offset >= PULL_THRESHOLD),
     cancel: () => settle(false),
   };
 }
@@ -189,6 +211,43 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
 
+  // The view after this one in sidebar order that has something to show under the current filter:
+  // offered at the end of the list, by pulling up past it on phones or by a link.
+  const nextView = useMemo((): NextView | null => {
+    if (!model || !feeds) return null;
+    const counts = filter === 'starred' ? starred : unread;
+    const has = (id: string) => filter === 'all' || (counts?.[id] ?? 0) > 0;
+    const next = nextScope(scope, model, has);
+    if (!next) return null;
+    const title =
+      (next.kind === 'category' ? model.categories.find((c) => c.id === next.id)?.title : next.kind === 'feed' ? feedsById.get(next.id)?.title : undefined) ?? '…';
+    const n = [...feedsInScope(next, feeds)].reduce((sum, id) => sum + (counts?.[id] ?? 0), 0);
+    return { title, detail: filter === 'all' ? undefined : `${n} ${filter}`, href: routeHash(next, filter) };
+  }, [viewKey, model, feeds, feedsById, filter, unread, starred]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nextRef = useRef(nextView);
+  nextRef.current = nextView;
+  const contentRef = useRef<HTMLDivElement>(null);
+  const pullHintRef = useRef<HTMLDivElement>(null);
+
+  // After pulling through to the next view: it rises into place from just below, and the hint goes.
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const hint = pullHintRef.current;
+    if (!content || content.dataset.pulled !== 'true') return;
+    delete content.dataset.pulled;
+    if (hint) {
+      hint.dataset.active = 'false';
+      hint.dataset.armed = 'false';
+    }
+    content.style.transition = 'none';
+    content.style.transform = 'translateY(48px)';
+    void content.offsetHeight; // apply the start position before animating from it
+    animateTo(content, 'translateY(0)', () => {
+      content.style.transform = '';
+      content.style.transition = '';
+    });
+  }, [viewKey]);
+
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
   // The drawer isn't in history, so Back with it open goes to the previous view; close it when the view changes.
@@ -235,7 +294,8 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
 
   const drawerWidth = () => drawerRef.current?.offsetWidth || Math.min(312, window.innerWidth * 0.85);
 
-  // Phones: on the article list, swipe left on an article to toggle read, or right to pull out the drawer.
+  // Phones: on the article list, swipe left on an article to toggle read, right to pull out the drawer,
+  // or, at the very end of the list, pull up to go on to the next feed or category.
   useSwipe(listEl, (direction: SwipeDirection, target: Element): SwipeSession | null => {
     if (direction === 'left') {
       const row = target.closest<HTMLElement>('[data-swipe-row]');
@@ -245,6 +305,14 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
         if (e) actions.setRead([e], !e.read);
       });
     }
+    if (direction === 'up') {
+      const next = nextRef.current;
+      const content = contentRef.current;
+      const hint = pullHintRef.current;
+      if (!next || !pullReadyRef.current || !listEl || !content || !hint || !atListEnd(listEl)) return null;
+      return pullSession(content, hint, () => navigate(next.href));
+    }
+    if (direction !== 'right') return null;
     setDrawerDragging(true);
     setDrawerOpen(true);
     return {
@@ -303,6 +371,9 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
   // saved shows, and a failed sync is only a toast.
   const firstLoad = !feeds;
   const error = (firstLoad && !syncing && syncError) || list.error || null;
+  // Only once everything in this view is loaded, so pulling at the end can't skip articles still to come.
+  const pullReadyRef = useRef(false);
+  pullReadyRef.current = !list.hasMore && !list.loadingMore && !error;
   const offlineNotice = `${offlineLabel() === 'offline' ? 'Offline' : 'Can’t reach your server'}: showing articles saved on this device${
     filter === 'all' ? ' (your unread and starred ones, and any you’ve loaded in the last 30 days)' : ''
   }.`;
@@ -321,28 +392,45 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col pt-[env(safe-area-inset-top)] md:pt-0">
-        <div ref={setListEl} className="min-h-0 flex-1">
-          <ArticleList
-            key={viewKey}
-            entries={entries}
-            feedsById={feedsById}
-            filter={filter}
-            actions={actions}
-            loading={entries.length === 0 && (list.loadingMore || (firstLoad && syncing))}
-            error={error ? (firstLoad && !online ? 'Connect to your server once to download your articles.' : describeError(error)) : null}
-            hasMore={list.hasMore}
-            loadingMore={list.loadingMore}
-            onLoadMore={list.loadMore}
-            notice={online ? undefined : offlineNotice}
-            {...(!online
-              ? {
-                  emptyTitle: 'Nothing saved for this view',
-                  emptyMessage: 'Skim keeps your unread and starred articles for reading offline. Sync while connected to download them.',
-                }
-              : scope.kind === 'feed' && isRecentlyAdded(scope.id)
-                ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
-                : { emptyMessage: EMPTY[filter] })}
-          />
+        <div ref={setListEl} className="relative min-h-0 flex-1 overflow-hidden">
+          {/* Phones: uncovered by pulling the list up past its end (see pullSession). */}
+          <div
+            ref={pullHintRef}
+            aria-hidden
+            className="group invisible absolute inset-x-0 bottom-0 flex flex-col items-center gap-0.5 pb-5 text-center data-[active=true]:visible md:hidden"
+          >
+            <ArrowUp size={20} className="mb-1 text-muted group-data-[armed=true]:text-accent" aria-hidden />
+            <span className="max-w-[85%] truncate text-[13px] text-muted2">
+              <span className="group-data-[armed=true]:hidden">Pull up for </span>
+              <span className="hidden group-data-[armed=true]:inline">Release for </span>
+              <span className="font-semibold text-text">{nextView?.title}</span>
+            </span>
+            {nextView?.detail && <span className="text-xs text-muted">{nextView.detail}</span>}
+          </div>
+          <div ref={contentRef} className="relative h-full bg-bg">
+            <ArticleList
+              key={viewKey}
+              entries={entries}
+              feedsById={feedsById}
+              filter={filter}
+              actions={actions}
+              loading={entries.length === 0 && (list.loadingMore || (firstLoad && syncing))}
+              error={error ? (firstLoad && !online ? 'Connect to your server once to download your articles.' : describeError(error)) : null}
+              hasMore={list.hasMore}
+              loadingMore={list.loadingMore}
+              onLoadMore={list.loadMore}
+              notice={online ? undefined : offlineNotice}
+              next={nextView ?? undefined}
+              {...(!online
+                ? {
+                    emptyTitle: 'Nothing saved for this view',
+                    emptyMessage: 'Skim keeps your unread and starred articles for reading offline. Sync while connected to download them.',
+                  }
+                : scope.kind === 'feed' && isRecentlyAdded(scope.id)
+                  ? { emptyTitle: 'Fetching the first articles…', emptyMessage: 'Your server is downloading this feed. Press sync in a minute to see them.' }
+                  : { emptyMessage: EMPTY[filter] })}
+            />
+          </div>
         </div>
 
         {/* The app bar lives at the bottom, on phones and desktop alike. */}

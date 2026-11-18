@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { GroupedVirtuoso } from 'react-virtuoso';
-import { CircleCheck, CircleDot } from 'lucide-react';
+import { ArrowRight, CircleCheck, CircleDot } from 'lucide-react';
 import type { Entry, Feed, Filter } from '../api/types';
 import type { Actions } from '../hooks/data';
 import { groupByDay, type DayGroup } from '../lib/dates';
@@ -20,6 +20,15 @@ interface Props {
   filter: Filter;
   /** A line above the list, e.g. that it was built from what's saved offline. */
   notice?: string;
+  /** The view to go on to once this one's done, offered at the end of the list. */
+  next?: NextView;
+}
+
+/** The feed or category after this one: its name, e.g. "12 unread" (none under All), and its link. */
+export interface NextView {
+  title: string;
+  detail?: string;
+  href: string;
 }
 
 const column = 'mx-auto w-full max-w-[1120px] px-3 md:px-6';
@@ -47,7 +56,7 @@ function DayHeader({ group, onMarkDay }: { group: DayGroup; onMarkDay(g: DayGrou
   );
 }
 
-export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, filter, notice, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
+export function ArticleList({ entries, feedsById, actions, loading, error, hasMore, loadingMore, onLoadMore, filter, notice, next, emptyTitle = 'You’re all caught up', emptyMessage }: Props) {
   const groups = useMemo(() => groupByDay(entries), [entries]);
   const flat = useMemo(() => groups.flatMap((g) => g.entries), [groups]);
   const groupCounts = useMemo(() => groups.map((g) => g.entries.length), [groups]);
@@ -72,13 +81,15 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
         {notice && <NoticeBar text={notice} />}
         <span className="text-lg font-semibold">{emptyTitle}</span>
         <span className="text-sm text-muted">{emptyMessage}</span>
+        {next && <NextLink next={next} />}
       </div>
     );
   }
 
   return (
     <GroupedVirtuoso
-      style={{ height: '100%' }}
+      // Keep the browser's own overscroll (Android's pull-to-refresh, page bounce) out of the pull-up gesture.
+      style={{ height: '100%', overscrollBehaviorY: 'contain' }}
       groupCounts={groupCounts}
       // Render the first rows straight away instead of waiting for the viewport to be measured.
       initialItemCount={Math.min(flat.length, 8)}
@@ -113,7 +124,7 @@ export function ArticleList({ entries, feedsById, actions, loading, error, hasMo
           </div>
         );
       }}
-      context={{ loadingMore, hasMore, notice }}
+      context={{ loadingMore, hasMore, notice, next }}
       components={{ Header: ListHeader, Footer: ListFooter }}
     />
   );
@@ -123,6 +134,7 @@ interface ListContext {
   loadingMore: boolean;
   hasMore: boolean;
   notice?: string;
+  next?: NextView;
 }
 
 function NoticeBar({ text }: { text: string }) {
@@ -138,13 +150,30 @@ function ListHeader({ context }: { context?: ListContext }) {
   );
 }
 
+/** "Next: Tech News · 12 unread →". On phones, pulling up past the end of the list does the same. */
+function NextLink({ next }: { next: NextView }) {
+  return (
+    <a
+      href={next.href}
+      className="mt-2 inline-flex h-11 max-w-full items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium text-accent no-underline hover:bg-seg-bg md:h-9"
+    >
+      <span className="truncate">
+        Next: <span className="font-semibold">{next.title}</span>
+        {next.detail && <span className="text-muted"> · {next.detail}</span>}
+      </span>
+      <ArrowRight size={16} className="flex-none" aria-hidden />
+    </a>
+  );
+}
+
 function ListFooter({ context }: { context?: ListContext }) {
   if (!context) return null;
   const atEnd = !context.loadingMore && !context.hasMore;
   const end = context.notice ? 'That’s everything saved on this device for this view.' : 'That’s everything in this view.';
   return (
-    <div className={`${column} pt-6 pb-8 text-center text-[13px] text-muted`}>
+    <div className={`${column} flex flex-col items-center pt-6 pb-8 text-center text-[13px] text-muted`}>
       {context.loadingMore ? 'Loading more…' : atEnd ? end : ''}
+      {atEnd && context.next && <NextLink next={context.next} />}
     </div>
   );
 }

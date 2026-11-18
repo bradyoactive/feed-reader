@@ -4,6 +4,7 @@ import { chunks, tally } from './collections';
 import { dayLabel, groupByDay } from './dates';
 import { parseArticle, safeUrl } from './html';
 import { parseHash, routeHash, scopeExists, setRouteNames, slugify } from './route';
+import { nextScope } from './scopes';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
 const entry = (id: string, published: number): Entry => ({
@@ -123,5 +124,38 @@ describe('collections', () => {
   it('splits into runs of at most the given size', () => {
     expect(chunks([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]);
     expect(chunks([], 3)).toEqual([]);
+  });
+});
+
+describe('nextScope', () => {
+  // Sidebar order: News (a, b), Tech (c), Empty (none), Misc (d).
+  const order = {
+    categories: [{ id: 'news' }, { id: 'tech' }, { id: 'empty' }, { id: 'misc' }],
+    feedsByCategory: new Map([
+      ['news', [{ id: 'a' }, { id: 'b' }]],
+      ['tech', [{ id: 'c' }]],
+      ['misc', [{ id: 'd' }]],
+    ]),
+  };
+  const only = (...ids: string[]) => (id: string) => ids.includes(id);
+
+  it('moves to the next category that has something, skipping ones that don’t', () => {
+    expect(nextScope({ kind: 'category', id: 'news' }, order, only('d'))).toEqual({ kind: 'category', id: 'misc' });
+    expect(nextScope({ kind: 'category', id: 'news' }, order, only('a', 'c'))).toEqual({ kind: 'category', id: 'tech' });
+  });
+
+  it('wraps around to the start, but never returns the current view', () => {
+    expect(nextScope({ kind: 'category', id: 'misc' }, order, only('b'))).toEqual({ kind: 'category', id: 'news' });
+    expect(nextScope({ kind: 'category', id: 'news' }, order, only('a'))).toBeNull();
+  });
+
+  it('moves between feeds across categories', () => {
+    expect(nextScope({ kind: 'feed', id: 'b' }, order, only('a', 'c'))).toEqual({ kind: 'feed', id: 'c' });
+    expect(nextScope({ kind: 'feed', id: 'd' }, order, only('a', 'd'))).toEqual({ kind: 'feed', id: 'a' });
+  });
+
+  it('has no next for All, or when nothing else has anything', () => {
+    expect(nextScope({ kind: 'all' }, order, () => true)).toBeNull();
+    expect(nextScope({ kind: 'feed', id: 'a' }, order, () => false)).toBeNull();
   });
 });
