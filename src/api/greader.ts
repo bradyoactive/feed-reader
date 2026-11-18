@@ -2,7 +2,7 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle, safeUrl } from '../lib/html';
 import { joinUrl, request, responseError, send } from './http';
 import { AuthError, UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
+import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, IdList } from './types';
 
 const PAGE_SIZE = 50;
 const READING_LIST = 'user/-/state/com.google/reading-list';
@@ -40,6 +40,10 @@ interface GrItem {
   enclosure?: { href: string; type?: string }[];
 }
 interface GrStream { items?: GrItem[]; continuation?: string }
+interface GrIds { itemRefs?: { id: string }[]; continuation?: string }
+
+const IDS_PAGE = 1000;
+const CONTENTS_BATCH = 100;
 
 /** Signs in with ClientLogin and returns the auth token. */
 export async function greaderLogin(url: string, username: string, password: string): Promise<string> {
@@ -220,7 +224,7 @@ export class GReaderBackend implements Backend {
     return counts;
   }
 
-  async getEntries({ scope, filter, cursor, feedIds }: EntryQuery): Promise<EntryPage> {
+  async getEntries({ scope, filter, cursor, feedIds, limit = PAGE_SIZE, before }: EntryQuery): Promise<EntryPage> {
     // Starred-in-a-folder and the Uncategorized pseudo-folder have no stream of their own,
     // so fetch the wider stream and keep only the feeds in scope.
     const clientFilter = filter === 'starred' ? scope.kind !== 'all' : scope.kind === 'category' && scope.id === UNCATEGORIZED;
@@ -237,9 +241,10 @@ export class GReaderBackend implements Backend {
     for (let i = 0; i < 10; i++) {
       const page = await this.get<GrStream>('/reader/api/0/stream/contents', {
         s: stream,
-        n: String(PAGE_SIZE),
+        n: String(limit),
         ...(filter === 'unread' ? { xt: READ } : {}),
-        ...(c ? { c } : {}),
+        // `nt` (newest time) is exclusive and whole seconds: start just after that second.
+        ...(c ? { c } : before != null ? { nt: String(Math.floor(before / 1000) + 1) } : {}),
       });
       for (const item of page.items ?? []) {
         const entry = toEntry(item);
@@ -249,6 +254,40 @@ export class GReaderBackend implements Backend {
       if (!c || entries.length > 0) break;
     }
     return { entries, nextCursor: c };
+  }
+
+  /**
+   * The Google Reader API can't say what changed since a time, so this sends the ids of every unread and
+   * every starred article (cheap: ids only) for the device to compare, and the articles among them the
+   * device doesn't have yet.
+   */
+  async getChanges({ since, has, limit }: ChangesQuery): Promise<Changes> {
+    if (since == null) return { entries: [], removed: [], next: '' };
+    const [unread, starred] = await Promise.all([this.ids(READING_LIST, READ, limit), this.ids(STARRED, null, limit)]);
+    const missing = [...new Set([...unread.ids, ...starred.ids])].filter((id) => !has(id));
+    const entries: Entry[] = [];
+    for (const batch of chunks(missing, CONTENTS_BATCH)) {
+      const text = await this.post('/reader/api/0/stream/items/contents?output=json', batch.map((id) => ['i', id] as [string, string]));
+      entries.push(...((JSON.parse(text) as GrStream).items ?? []).map(toEntry));
+    }
+    return { entries, removed: [], unread, starred, next: '' };
+  }
+
+  /** Ids in a stream, newest first, up to `limit`. */
+  private async ids(stream: string, exclude: string | null, limit: number): Promise<IdList> {
+    const ids: string[] = [];
+    let c: string | undefined;
+    do {
+      const page = await this.get<GrIds>('/reader/api/0/stream/items/ids', {
+        s: stream,
+        n: String(Math.min(IDS_PAGE, limit - ids.length)),
+        ...(exclude ? { xt: exclude } : {}),
+        ...(c ? { c } : {}),
+      });
+      ids.push(...(page.itemRefs ?? []).map((r) => normalizeItemId(r.id)));
+      c = page.continuation;
+    } while (c && ids.length < limit);
+    return { ids: ids.slice(0, limit), complete: !c };
   }
 
   async setRead(entries: EntryRef[], read: boolean): Promise<void> {

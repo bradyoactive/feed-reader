@@ -160,3 +160,49 @@ describe('greader', () => {
     expect(Object.fromEntries(bodies[0])).toMatchObject({ ac: 'unsubscribe', s: 'feed/5' });
   });
 });
+
+describe('greader changes', () => {
+  const ITEM = 'tag:google.com,2005:reader/item/';
+  const long = (n: number) => ITEM + n.toString(16).padStart(16, '0');
+
+  it('sends unread and starred ids, and downloads only the articles the device is missing', async () => {
+    const f = mockFetch((url, init) => {
+      if (url.pathname.endsWith('/token')) return new Response('T1');
+      if (url.pathname.endsWith('/stream/items/ids')) {
+        return url.searchParams.get('s')!.endsWith('/starred')
+          ? json({ itemRefs: [{ id: '3' }] })
+          : json({ itemRefs: [{ id: '1' }, { id: '2' }] });
+      }
+      if (url.pathname.endsWith('/stream/items/contents')) {
+        const ids = new URLSearchParams(String(init.body)).getAll('i');
+        return json({ items: ids.map((id) => item(Number.parseInt(id.slice(ITEM.length), 16), { id })) });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const b = new GReaderBackend(config);
+    const c = await b.getChanges({ since: '', has: (id) => id === long(1), limit: 5000 });
+    expect(c.unread).toEqual({ ids: [long(1), long(2)], complete: true });
+    expect(c.starred).toEqual({ ids: [long(3)], complete: true });
+    expect(c.entries.map((e) => e.id)).toEqual([long(2), long(3)]);
+    const idsCall = f.mock.calls.map(([u]) => new URL(String(u))).find((u) => u.pathname.endsWith('/ids') && !u.searchParams.get('s')!.endsWith('/starred'))!;
+    expect(idsCall.searchParams.get('xt')).toBe('user/-/state/com.google/read');
+  });
+
+  it('stops at the limit and says the list is incomplete', async () => {
+    mockFetch(() => json({ itemRefs: [{ id: '1' }, { id: '2' }], continuation: 'more' }));
+    const c = await new GReaderBackend(config).getChanges({ since: '', has: () => true, limit: 2 });
+    expect(c.unread).toEqual({ ids: [long(1), long(2)], complete: false });
+  });
+
+  it('asks for nothing when only a starting point is wanted', async () => {
+    const f = mockFetch(() => json({}));
+    expect(await new GReaderBackend(config).getChanges({ since: null, has: () => true, limit: 10 })).toEqual({ entries: [], removed: [], next: '' });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('starts a list just after a time', async () => {
+    const f = mockFetch(() => json({ items: [] }));
+    await new GReaderBackend(config).getEntries({ scope: { kind: 'all' }, filter: 'all', feedIds: new Set(), before: 1_700_000_000_500 });
+    expect(new URL(String(f.mock.calls[0][0])).searchParams.get('nt')).toBe('1700000001');
+  });
+});

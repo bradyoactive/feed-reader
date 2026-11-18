@@ -215,3 +215,48 @@ describe('miniflux', () => {
     expect(f).not.toHaveBeenCalled();
   });
 });
+
+describe('miniflux changes', () => {
+  const changed = (id: number, changedAt: string, extra = {}) => entry(id, '2026-01-01T00:00:00Z', { changed_at: changedAt, ...extra });
+
+  it('starts from the newest change on the server', async () => {
+    const f = mockFetch(() => ({ total: 1, entries: [changed(9, '2026-03-01T00:00:10Z')] }));
+    const c = await new MinifluxBackend(config).getChanges({ since: null, has: () => false, limit: 5000 });
+    expect(c).toEqual({ entries: [], removed: [], next: String(Date.parse('2026-03-01T00:00:10Z') / 1000) });
+    const url = new URL(String(f.mock.calls[0][0]));
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ order: 'changed_at', direction: 'desc', limit: '1' });
+  });
+
+  it('pages through changes newest first, and keeps the newest change as the next starting point', async () => {
+    const since = 1_700_000_000;
+    const first = Array.from({ length: 250 }, (_, i) => changed(1000 - i, new Date((since + 500 - i) * 1000).toISOString()));
+    const f = mockFetch((url) =>
+      url.searchParams.get('offset') === '0'
+        ? { total: 252, entries: first }
+        : { total: 252, entries: [changed(2, new Date(since * 1000).toISOString()), changed(1, new Date(since * 1000).toISOString(), { status: 'removed' })] },
+    );
+    const c = await new MinifluxBackend(config).getChanges({ since: String(since), has: () => true, limit: 5000 });
+    expect(c.entries).toHaveLength(251);
+    expect(c.removed).toEqual(['1']);
+    expect(c.next).toBe(String(since + 500));
+    const params = f.mock.calls.map(([u]) => Object.fromEntries(new URL(String(u)).searchParams));
+    expect(params).toEqual([
+      expect.objectContaining({ changed_after: String(since - 1), offset: '0', limit: '250' }),
+      expect.objectContaining({ offset: '250' }),
+    ]);
+  });
+
+  it('keeps the old starting point when nothing changed', async () => {
+    mockFetch(() => ({ total: 0, entries: [] }));
+    const c = await new MinifluxBackend(config).getChanges({ since: '123', has: () => true, limit: 5000 });
+    expect(c).toEqual({ entries: [], removed: [], next: '123' });
+  });
+
+  it('starts a list at a time, including that second, with the page size asked for', async () => {
+    const f = mockFetch(() => ({ total: 0, entries: [] }));
+    await new MinifluxBackend(config).getEntries({ scope: { kind: 'all' }, filter: 'all', feedIds: new Set(), limit: 250, before: 1_700_000_000_500 });
+    const params = new URL(String(f.mock.calls[0][0])).searchParams;
+    expect(params.get('before')).toBe('1700000001');
+    expect(params.get('limit')).toBe('250');
+  });
+});

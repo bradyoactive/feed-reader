@@ -2,9 +2,10 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed, Filter, Scope } from './types';
+import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, Filter, Scope } from './types';
 
 const PAGE_SIZE = 50;
+const CHANGES_PAGE = 250;
 
 export type MinifluxAuth = { type: 'token'; token: string } | { type: 'basic'; username: string; password: string };
 
@@ -25,6 +26,8 @@ interface MfEntry {
   url: string;
   content: string;
   published_at: string;
+  /** When the article was added or last marked read/unread or starred (server time). */
+  changed_at?: string;
   status: 'read' | 'unread' | 'removed';
   starred: boolean;
   enclosures?: MfEnclosure[] | null;
@@ -131,24 +134,26 @@ export class MinifluxBackend implements Backend {
    *   c:<second>:<id>:<ids>  that second holds more than a page, so page through it by id (below <id>),
    *                          skipping the ids shown before the catch-up started; then carry on before it
    */
-  async getEntries({ scope, filter, cursor }: EntryQuery): Promise<EntryPage> {
+  async getEntries({ scope, filter, cursor, limit = PAGE_SIZE, before }: EntryQuery): Promise<EntryPage> {
+    // Starting from a time: that second and everything before it, as if carrying on from it.
+    if (!cursor && before != null) cursor = `d:${Math.floor(before / 1000)}:`;
     // A page can come back with nothing new (all already shown); keep going so the list never stalls.
     for (let i = 0; i < 10; i++) {
-      const page = await this.entryPage(scope, filter, cursor);
+      const page = await this.entryPage(scope, filter, cursor, limit);
       if (page.entries.length > 0 || !page.nextCursor) return page;
       cursor = page.nextCursor;
     }
     return { entries: [], nextCursor: cursor };
   }
 
-  private async entryPage(scope: Scope, filter: Filter, cursor: string | undefined): Promise<EntryPage> {
+  private async entryPage(scope: Scope, filter: Filter, cursor: string | undefined, size: number): Promise<EntryPage> {
     const [mode, sec, ...rest] = cursor?.split(':') ?? [];
     const second = Number(sec);
     const catchUp = mode === 'c';
     const belowId = catchUp ? rest[0] : undefined;
     const seen = new Set((catchUp ? rest[1] : rest[0])?.split(',').filter(Boolean));
 
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), order: catchUp ? 'id' : 'published_at', direction: 'desc' });
+    const params = new URLSearchParams({ limit: String(size), order: catchUp ? 'id' : 'published_at', direction: 'desc' });
     if (filter === 'unread') params.set('status', 'unread');
     if (filter === 'starred') params.set('starred', 'true');
     if (scope.kind === 'category') params.set('category_id', scope.id);
@@ -164,7 +169,7 @@ export class MinifluxBackend implements Backend {
     const secondOf = (e: MfEntry) => Math.floor(Date.parse(e.published_at) / 1000);
     const shown = raw.filter((e) => !seen.has(String(e.id)) && (!catchUp || secondOf(e) === second));
     const entries = shown.map(toEntry);
-    const full = raw.length === PAGE_SIZE;
+    const full = raw.length === size;
 
     if (catchUp) {
       // Through that second by id; once it's done, everything older than it.
@@ -176,6 +181,38 @@ export class MinifluxBackend implements Backend {
     const ids = [...(last === second ? seen : []), ...shown.filter((e) => secondOf(e) === last).map((e) => String(e.id))].join(',');
     // A whole page from one second: it may hold more than a page, which date paging can't get past.
     return { entries, nextCursor: secondOf(raw[0]) === last ? `c:${last}::${ids}` : `d:${last}:${ids}` };
+  }
+
+  /**
+   * Articles whose `changed_at` is after `since` (unix seconds, server time): Miniflux sets it when an
+   * article arrives and whenever it's marked read/unread or starred. Pages run newest change first, so a
+   * change made while paging moves an article to the front and only repeats one; it never pushes one out of
+   * reach. `next` is the newest change seen at the start, so anything changed while paging comes again.
+   */
+  async getChanges({ since }: ChangesQuery): Promise<Changes> {
+    const params = new URLSearchParams({ order: 'changed_at', direction: 'desc', limit: String(CHANGES_PAGE) });
+    const changedAt = (e: MfEntry) => Math.floor(Date.parse(e.changed_at ?? e.published_at) / 1000);
+    if (since == null) {
+      params.set('limit', '1');
+      const top = (await this.call<MfEntries>(`/v1/entries?${params}`)).entries?.[0];
+      return { entries: [], removed: [], next: String(top ? changedAt(top) : Math.floor(Date.now() / 1000)) };
+    }
+    // `changed_after` is exclusive and whole seconds: take the second of `since` again (repeats are harmless).
+    params.set('changed_after', String(Number(since) - 1));
+    const entries: Entry[] = [];
+    const removed: string[] = [];
+    let next = Number(since);
+    for (let offset = 0; ; offset += CHANGES_PAGE) {
+      params.set('offset', String(offset));
+      const page = (await this.call<MfEntries>(`/v1/entries?${params}`)).entries ?? [];
+      if (offset === 0 && page[0]) next = Math.max(next, changedAt(page[0]));
+      for (const e of page) {
+        if (e.status === 'removed') removed.push(String(e.id));
+        else entries.push(toEntry(e));
+      }
+      if (page.length < CHANGES_PAGE) break;
+    }
+    return { entries, removed, next: String(next) };
   }
 
   async subscribe(url: string, category: CategoryChoice): Promise<string> {

@@ -1,5 +1,5 @@
 import { tally } from '../lib/collections';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
+import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -149,15 +149,32 @@ export class DemoBackend implements Backend {
     return this.countBy((e) => e.starred);
   }
 
-  async getEntries({ filter, cursor, feedIds }: EntryQuery): Promise<EntryPage> {
+  async getEntries({ filter, cursor, feedIds, limit = 20, before }: EntryQuery): Promise<EntryPage> {
     await wait(250);
     this.arrive();
-    const start = cursor ? Number(cursor) : 0;
+    // The cursor is "<offset>:<before>", so later pages count from the same list.
+    const [offset, from] = cursor?.split(':') ?? [];
+    const start = Number(offset ?? 0);
+    const until = cursor ? (from ? Number(from) : undefined) : before;
     const matching = this.entries.filter(
-      (e) => feedIds.has(e.feedId) && (filter === 'all' || (filter === 'unread' ? !e.read : e.starred)),
+      (e) =>
+        feedIds.has(e.feedId) &&
+        (until == null || e.published <= until) &&
+        (filter === 'all' || (filter === 'unread' ? !e.read : e.starred)),
     );
-    const page = matching.slice(start, start + 20).map((e) => ({ ...e }));
-    return { entries: page, nextCursor: start + 20 < matching.length ? String(start + 20) : undefined };
+    const page = matching.slice(start, start + limit).map((e) => ({ ...e }));
+    const more = start + limit < matching.length;
+    return { entries: page, nextCursor: more ? `${start + limit}:${until ?? ''}` : undefined };
+  }
+
+  /** Like a Google Reader server: every unread and starred id, and the articles the device is missing. */
+  async getChanges({ since, has }: ChangesQuery): Promise<Changes> {
+    await wait(120);
+    this.arrive();
+    if (since == null) return { entries: [], removed: [], next: '' };
+    const ids = (pred: (e: Entry) => boolean) => ({ ids: this.entries.filter(pred).map((e) => e.id), complete: true });
+    const entries = this.entries.filter((e) => (!e.read || e.starred) && !has(e.id)).map((e) => ({ ...e }));
+    return { entries, removed: [], unread: ids((e) => !e.read), starred: ids((e) => e.starred), next: '' };
   }
 
   async setRead(entries: EntryRef[], read: boolean) {

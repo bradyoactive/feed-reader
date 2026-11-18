@@ -58,6 +58,44 @@ export interface EntryQuery {
   cursor?: string;
   /** Feeds in scope; adapters that filter client-side need it. */
   feedIds: Set<string>;
+  /** Page size; each adapter has its own default. */
+  limit?: number;
+  /**
+   * Start at articles published at or before this time (ms), for carrying on past what's stored on the
+   * device. Articles from that same second may come again. Ignored when `cursor` is given.
+   */
+  before?: number;
+}
+
+/** Every id the server has in some state (unread, starred), newest first. */
+export interface IdList {
+  ids: string[];
+  /** False when the list stopped at the limit asked for, so older articles may be in that state too. */
+  complete: boolean;
+}
+
+/**
+ * What changed on the server since the last sync. Servers report it one of two ways: Miniflux sends the
+ * articles that changed, and Google Reader servers send the ids in each state, for the device to compare.
+ */
+export interface Changes {
+  /** New and changed articles (Miniflux), or articles in `unread`/`starred` the device doesn't have yet. */
+  entries: Entry[];
+  /** Ids the server has deleted. */
+  removed: string[];
+  unread?: IdList;
+  starred?: IdList;
+  /** Pass back as `since` next time. */
+  next: string;
+}
+
+export interface ChangesQuery {
+  /** `next` from the last call, or null for a starting point only (no changes are fetched). */
+  since: string | null;
+  /** Whether the device already has an article, so only missing ones are downloaded. */
+  has(id: string): boolean;
+  /** At most this many ids per state. */
+  limit: number;
 }
 
 /** An existing category, or a new one to create with this title. */
@@ -74,6 +112,8 @@ export interface Backend {
   /** Total (read + unread) counts keyed by feed id, or null when the server can't report them. */
   getTotalCounts(): Promise<Record<string, number> | null>;
   getEntries(query: EntryQuery): Promise<EntryPage>;
+  /** What changed since the last call (see Changes). */
+  getChanges(query: ChangesQuery): Promise<Changes>;
   setRead(entries: EntryRef[], read: boolean): Promise<void>;
   setStarred(entry: EntryRef, starred: boolean): Promise<void>;
   /** Subscribes to a feed address in a category. Returns the new feed's id. */
