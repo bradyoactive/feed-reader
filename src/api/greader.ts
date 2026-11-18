@@ -43,6 +43,8 @@ interface GrStream { items?: GrItem[]; continuation?: string }
 interface GrIds { itemRefs?: { id: string }[]; continuation?: string }
 
 const IDS_PAGE = 1000;
+/** How far the server's clock may be from the device's. */
+const CLOCK_MARGIN_S = 600;
 const CONTENTS_BATCH = 100;
 
 /** Signs in with ClientLogin and returns the auth token. */
@@ -258,19 +260,44 @@ export class GReaderBackend implements Backend {
 
   /**
    * The Google Reader API can't say what changed since a time, so this sends the ids of every unread and
-   * every starred article (cheap: ids only) for the device to compare, and the articles among them the
-   * device doesn't have yet.
+   * every starred article (cheap: ids only) for the device to compare, the articles among them the device
+   * doesn't have yet, and every article that arrived since the last sync, read or not. `next` is when this
+   * started (unix seconds); arrivals are asked for from a few minutes before `since`, as the server's clock
+   * may differ.
    */
   async getChanges({ since, has, limit }: ChangesQuery): Promise<Changes> {
-    if (since == null) return { entries: [], removed: [], next: '' };
-    const [unread, starred] = await Promise.all([this.ids(READING_LIST, READ, limit), this.ids(STARRED, null, limit)]);
-    const missing = [...new Set([...unread.ids, ...starred.ids])].filter((id) => !has(id));
-    const entries: Entry[] = [];
+    const next = String(Math.floor(Date.now() / 1000));
+    if (since == null) return { entries: [], removed: [], next };
+    const [unread, starred, arrived] = await Promise.all([
+      this.ids(READING_LIST, READ, limit),
+      this.ids(STARRED, null, limit),
+      since ? this.arrivedSince(Number(since) - CLOCK_MARGIN_S, limit) : Promise.resolve([]),
+    ]);
+    const got = new Set(arrived.map((e) => e.id));
+    const missing = [...new Set([...unread.ids, ...starred.ids])].filter((id) => !has(id) && !got.has(id));
+    const entries: Entry[] = [...arrived];
     for (const batch of chunks(missing, CONTENTS_BATCH)) {
       const text = await this.post('/reader/api/0/stream/items/contents?output=json', batch.map((id) => ['i', id] as [string, string]));
       entries.push(...((JSON.parse(text) as GrStream).items ?? []).map(toEntry));
     }
-    return { entries, removed: [], unread, starred, next: '' };
+    return { entries, removed: [], unread, starred, next };
+  }
+
+  /** Every article that arrived after `ot` (unix seconds), newest first, up to `limit`. */
+  private async arrivedSince(ot: number, limit: number): Promise<Entry[]> {
+    const out: Entry[] = [];
+    let c: string | undefined;
+    do {
+      const page = await this.get<GrStream>('/reader/api/0/stream/contents', {
+        s: READING_LIST,
+        n: String(IDS_PAGE),
+        ot: String(ot),
+        ...(c ? { c } : {}),
+      });
+      out.push(...(page.items ?? []).map(toEntry));
+      c = page.continuation;
+    } while (c && out.length < limit);
+    return out;
   }
 
   /** Ids in a stream, newest first, up to `limit`. */

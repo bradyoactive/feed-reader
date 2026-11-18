@@ -26,10 +26,27 @@ export interface Progress {
   truncated: boolean;
 }
 
-/** The first download: every unread and starred article, resumed where it stopped after a restart. */
+/** How far the first download of every recent article (read or not) has got. */
+export interface RecentProgress {
+  cursor?: string;
+  /** Down to this publish time (ms): KEEP_READ_MS before the download started. */
+  from: number;
+  /** The oldest article downloaded so far (ms). */
+  oldest?: number;
+  done: boolean;
+  /** Stopped at the limit before reaching `from`: only covered down to `oldest`. */
+  truncated?: boolean;
+}
+
+/**
+ * The first download, resumed where it stopped after a restart: every unread and starred article, then
+ * every article from the last 30 days, so lists under All are complete for that stretch.
+ */
 export interface Baseline {
   unread: Progress;
   starred: Progress;
+  /** Missing in downloads saved before it existed: it runs then. */
+  recent?: RecentProgress;
 }
 
 /** Everything about a connection that isn't an article, saved alongside them. */
@@ -45,6 +62,11 @@ export interface Meta {
   /** Where the server's changes carry on from (Backend.getChanges). */
   since: string;
   baseline: Baseline;
+  /**
+   * Every article published at or after this time (ms) is on the device, as of the last sync. Set once the
+   * download of recent articles is done; pruning only ever moves it later.
+   */
+  coveredFrom: number;
   /** Feed icons fetched through the API, as data: URLs (null: the server has none). */
   icons: Record<string, string | null>;
 }

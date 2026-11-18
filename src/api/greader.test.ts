@@ -194,10 +194,29 @@ describe('greader changes', () => {
     expect(c.unread).toEqual({ ids: [long(1), long(2)], complete: false });
   });
 
-  it('asks for nothing when only a starting point is wanted', async () => {
+  it('asks for nothing when only a starting point is wanted, which is now', async () => {
     const f = mockFetch(() => json({}));
-    expect(await new GReaderBackend(config).getChanges({ since: null, has: () => true, limit: 10 })).toEqual({ entries: [], removed: [], next: '' });
+    const c = await new GReaderBackend(config).getChanges({ since: null, has: () => true, limit: 10 });
+    expect(c.entries).toEqual([]);
+    expect(Math.abs(Number(c.next) - Date.now() / 1000)).toBeLessThan(5);
     expect(f).not.toHaveBeenCalled();
+  });
+
+  it('also sends every article that arrived since the last sync, read or not, without fetching it twice', async () => {
+    const f = mockFetch((url, init) => {
+      if (url.pathname.endsWith('/token')) return new Response('T1');
+      if (url.pathname.endsWith('/stream/items/ids')) return json({ itemRefs: url.searchParams.get('s')!.endsWith('/starred') ? [] : [{ id: '7' }] });
+      if (url.pathname.endsWith('/stream/contents')) {
+        return json({ items: [item(7, { id: long(7) }), item(8, { id: long(8), categories: ['user/-/state/com.google/read'] })] });
+      }
+      if (url.pathname.endsWith('/stream/items/contents')) return json({ items: new URLSearchParams(String(init.body)).getAll('i').map((id) => item(0, { id })) });
+      throw new Error(`unexpected ${url}`);
+    });
+    const c = await new GReaderBackend(config).getChanges({ since: '1700000000', has: () => false, limit: 5000 });
+    expect(c.entries.map((e) => [e.id, e.read])).toEqual([[long(7), false], [long(8), true]]);
+    const urls = f.mock.calls.map(([u]) => new URL(String(u)));
+    expect(urls.find((u) => u.pathname.endsWith('/stream/contents'))!.searchParams.get('ot')).toBe('1699999400');
+    expect(urls.some((u) => u.pathname.endsWith('/stream/items/contents'))).toBe(false);
   });
 
   it('starts a list just after a time', async () => {

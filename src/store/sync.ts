@@ -4,10 +4,12 @@ import { AuthError, describeError, isNetworkError, UNCATEGORIZED } from '../api/
 import { retryConnection } from '../lib/network';
 import { toast } from '../lib/toast';
 import { KEEP_READ_MS, type ArticleStore } from './store';
-import type { Baseline, Progress, Write } from './types';
+import type { Baseline, Progress, RecentProgress, Write } from './types';
 
 /** At most this many unread (and starred) articles are downloaded; older ones stay on the server. */
 export const DOWNLOAD_LIMIT = 5000;
+/** At most this many recent articles (read or not); a busier month is covered only down to the last one. */
+export const RECENT_LIMIT = 10_000;
 const DOWNLOAD_PAGE = 250;
 
 export interface SyncStatus {
@@ -166,7 +168,9 @@ export class Syncer {
 
     // After a long break, changes since then could be most of the server: download afresh instead.
     const last = this.store.getMeta('lastSync');
-    if (last != null && startedAt - last > KEEP_READ_MS) this.store.setMeta({ baseline: undefined, since: undefined });
+    if (last != null && startedAt - last > KEEP_READ_MS) {
+      this.store.setMeta({ baseline: undefined, since: undefined, coveredFrom: undefined });
+    }
 
     if (this.store.getMeta('baseline') && this.isDownloaded()) await this.fetchChanges();
     else void this.startDownload();
@@ -177,7 +181,7 @@ export class Syncer {
 
   private isDownloaded() {
     const b = this.store.getMeta('baseline');
-    return !!b && b.unread.done && b.starred.done;
+    return !!b && b.unread.done && b.starred.done && !!b.recent?.done;
   }
 
   private async fetchChanges() {
@@ -220,42 +224,69 @@ export class Syncer {
       const start = await this.backend.getChanges({ since: null, has: this.store.has, limit: DOWNLOAD_LIMIT });
       this.store.setMeta({ since: start.next });
     }
-    let baseline: Baseline = this.store.getMeta('baseline') ?? { unread: emptyProgress(), starred: emptyProgress() };
     const startedAt = Date.now();
-    const count = () => baseline.unread.ids.length + baseline.starred.ids.length;
-    this.setStatus({ downloading: { count: count() } });
+    let baseline: Baseline = this.store.getMeta('baseline') ?? { unread: emptyProgress(), starred: emptyProgress() };
+    const save = (next: Baseline) => this.store.setMeta({ baseline: (baseline = next) });
+    let count = 0;
+    const arrived = (n: number) => this.setStatus({ downloading: { count: (count += n) } });
+    arrived(0);
     const feedIds = new Set((this.store.getMeta('feeds') ?? []).map((f) => f.id));
+    const page = (filter: Filter, cursor: string | undefined) =>
+      this.backend.getEntries({ scope: { kind: 'all' }, filter, cursor, feedIds, limit: DOWNLOAD_PAGE });
 
+    // Every unread, then every starred article.
     for (const filter of ['unread', 'starred'] as const satisfies readonly Filter[]) {
       let p = baseline[filter];
+      if (p.done) continue;
       while (!p.done) {
         const asked = Date.now();
-        let page;
+        let got;
         try {
-          page = await this.backend.getEntries({ scope: { kind: 'all' }, filter, cursor: p.cursor, feedIds, limit: DOWNLOAD_PAGE });
+          got = await page(filter, p.cursor);
         } catch (err) {
           // A saved place the server no longer accepts: start this kind over, once.
           if (!p.cursor || isNetworkError(err) || err instanceof AuthError) throw err;
           p = emptyProgress();
           continue;
         }
-        this.store.putFromServer(page.entries, asked);
-        const ids = [...p.ids, ...page.entries.map((e) => e.id)];
+        this.store.putFromServer(got.entries, asked);
+        arrived(got.entries.length);
+        const ids = [...p.ids, ...got.entries.map((e) => e.id)];
         const full = ids.length >= DOWNLOAD_LIMIT;
-        p = { cursor: page.nextCursor, ids, done: !page.nextCursor || full, truncated: !!page.nextCursor && full };
-        baseline = { ...baseline, [filter]: p };
-        this.store.setMeta({ baseline });
-        this.setStatus({ downloading: { count: count() } });
+        p = { cursor: got.nextCursor, ids, done: !got.nextCursor || full, truncated: !!got.nextCursor && full };
+        if (!p.done) save({ ...baseline, [filter]: p });
       }
+      // Stored articles it didn't include aren't unread (starred) any more. Once, as it finishes: the ids are
+      // only kept until then.
+      this.store.applyIdList(filter === 'unread' ? 'read' : 'starred', { ids: p.ids, complete: !p.truncated }, startedAt);
+      save({ ...baseline, [filter]: { ...p, ids: [] } });
     }
 
-    // Stored articles the download didn't include aren't unread (starred) any more.
-    this.store.applyIdList('read', { ids: baseline.unread.ids, complete: !baseline.unread.truncated }, startedAt);
-    this.store.applyIdList('starred', { ids: baseline.starred.ids, complete: !baseline.starred.truncated }, startedAt);
-    // The ids were only needed for that; keep the progress small.
-    this.store.setMeta({
-      baseline: { unread: { ...baseline.unread, ids: [] }, starred: { ...baseline.starred, ids: [] } },
-    });
+    // Then every article from the last 30 days (as long as read ones are kept), so All is complete for it.
+    let r: RecentProgress = baseline.recent ?? { from: startedAt - KEEP_READ_MS, done: false };
+    let fetched = 0; // this run only: a resumed download may take a little more than the limit
+    while (!r.done) {
+      const asked = Date.now();
+      let got;
+      try {
+        got = await page('all', r.cursor);
+      } catch (err) {
+        if (!r.cursor || isNetworkError(err) || err instanceof AuthError) throw err;
+        r = { from: r.from, done: false };
+        continue;
+      }
+      this.store.putFromServer(got.entries, asked);
+      arrived(got.entries.length);
+      fetched += got.entries.length;
+      const oldest = Math.min(r.oldest ?? Infinity, ...got.entries.map((e) => e.published));
+      const reached = !got.nextCursor || oldest < r.from;
+      const full = fetched >= RECENT_LIMIT;
+      r = { cursor: got.nextCursor, from: r.from, oldest, done: reached || full, truncated: !reached && full };
+      save({ ...baseline, recent: r });
+    }
+    // Complete down to `from`, or only as far as it got when it stopped at the limit.
+    this.store.setMeta({ coveredFrom: r.truncated && r.oldest != null ? r.oldest : r.from });
+
     // Then catch up with whatever changed while it ran.
     await this.fetchChanges();
   }

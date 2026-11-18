@@ -125,12 +125,18 @@ export interface ArticleList {
  *
  * Past the end of what's stored (under All, or while the first download hasn't reached this view) older
  * articles are fetched from the server, saved, and added to the end.
+ *
+ * Under All, the device has every article only from `coveredFrom` on (the last 30 days, once the first
+ * download is done); older ones there are just the unread, starred and earlier-loaded ones. So online, the
+ * list shows that complete stretch and continues from the server below it, never skipping the read
+ * articles in between. Offline, it shows everything saved.
  */
 export function useArticleList(scope: Scope, filter: Filter, viewKey: string, ready: boolean): ArticleList {
   const { store, backend } = useConnection();
   const version = useStoreVersion();
   const feeds = useFeeds();
   const baseline = useMeta('baseline');
+  const coveredFrom = useMeta('coveredFrom');
   const { syncing, downloading } = useSyncStatus();
   const online = useOnline();
   const keep = useVisitMemory(viewKey);
@@ -146,20 +152,18 @@ export function useArticleList(scope: Scope, filter: Filter, viewKey: string, re
     wasBusy.current = busy;
   }, [busy]);
 
+  // Fetching older articles: one chain of server pages per visit, and the oldest article it has reached.
+  type Chain = { key: string; cursor?: string; started: boolean; exhausted: boolean; error: unknown; oldest?: number };
+  const chain = useRef<Chain>({ key: viewKey, started: false, exhausted: false, error: null });
+  if (chain.current.key !== viewKey) chain.current = { key: viewKey, started: false, exhausted: false, error: null };
+
+  // Under All, online: down to where the device's copy is complete, or as far as the server pages reached.
+  const frontier = filter === 'all' && online ? Math.min(coveredFrom ?? Infinity, chain.current.oldest ?? Infinity) : -Infinity;
   const ids = useMemo(
-    () => (ready ? store.list(feedIds, (e) => keep(e.id, matches(filter)(e))).map((e) => e.id) : []),
-    [store, feedIds, filter, keep, ready, epoch], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (ready ? store.list(feedIds, (e) => e.published >= frontier && keep(e.id, matches(filter)(e))).map((e) => e.id) : []),
+    [store, feedIds, filter, keep, ready, epoch, frontier], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const entries = useMemo(() => ids.map((id) => store.get(id)).filter((e): e is Entry => !!e), [ids, version]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetching older articles: one chain of server pages per visit.
-  const chain = useRef<{ key: string; cursor?: string; started: boolean; exhausted: boolean; error: unknown }>({
-    key: viewKey,
-    started: false,
-    exhausted: false,
-    error: null,
-  });
-  if (chain.current.key !== viewKey) chain.current = { key: viewKey, started: false, exhausted: false, error: null };
   const [loadingMore, setLoadingMore] = useState(false);
 
   // Unread and starred are complete on the device once downloaded (unless there were too many); All never is.
@@ -170,17 +174,21 @@ export function useArticleList(scope: Scope, filter: Filter, viewKey: string, re
   const loadMore = useCallback(() => {
     const c = chain.current;
     if (loadingMore || c.exhausted || c.error) return;
-    const oldest = entries.at(-1);
+    // All carries on below the complete stretch (from the top before there is one); unread and starred below
+    // the oldest one shown, as everything newer in that state is already on the device.
+    const before = filter === 'all' ? coveredFrom : entries.at(-1)?.published;
     setLoadingMore(true);
     const asked = Date.now();
     backend
-      .getEntries(c.started ? { scope, filter, feedIds, cursor: c.cursor } : { scope, filter, feedIds, before: oldest?.published })
+      .getEntries(c.started ? { scope, filter, feedIds, cursor: c.cursor } : { scope, filter, feedIds, before })
       .then(
         (page) => {
           if (chain.current !== c) return;
           c.started = true;
           c.cursor = page.nextCursor;
           c.exhausted = !page.nextCursor;
+          // Reached the end: nothing older is left to skip.
+          c.oldest = c.exhausted ? -Infinity : Math.min(c.oldest ?? Infinity, ...page.entries.map((e) => e.published));
           store.putFromServer(page.entries, asked);
           setEpoch((n) => n + 1);
         },
@@ -192,7 +200,7 @@ export function useArticleList(scope: Scope, filter: Filter, viewKey: string, re
         },
       )
       .finally(() => setLoadingMore(false));
-  }, [backend, store, scope, filter, feedIds, entries, loadingMore]);
+  }, [backend, store, scope, filter, feedIds, entries, loadingMore, coveredFrom]);
 
   // Back online after fetching failed for want of a connection: try again.
   useEffect(() => {

@@ -280,6 +280,9 @@ export class ArticleStore {
       .filter((e) => e.read && !e.starred && e.published < now - KEEP_READ_MS && !waiting.has(e.id))
       .map((e) => e.id);
     this.remove(old);
+    // Read articles from before then may be gone now, so the device's copy is complete only from then on.
+    const covered = this.meta.coveredFrom;
+    if (covered != null && covered < now - KEEP_READ_MS) this.setMeta({ coveredFrom: now - KEEP_READ_MS });
   }
 
   /** Deletes everything saved for this connection. */

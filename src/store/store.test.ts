@@ -131,6 +131,17 @@ describe('ArticleStore', () => {
     expect(['read-old', 'read-new', 'unread-old', 'starred-old', 'waiting'].map((id) => s.has(id))).toEqual([false, true, true, true, true]);
   });
 
+  it('moves where the device’s copy is complete from when pruning deletes older read articles', async () => {
+    const now = 1000 * DAY;
+    const s = await open();
+    s.setMeta({ coveredFrom: now - 40 * DAY });
+    s.prune(now);
+    expect(s.getMeta('coveredFrom')).toBe(now - KEEP_READ_MS);
+    s.setMeta({ coveredFrom: now - DAY });
+    s.prune(now);
+    expect(s.getMeta('coveredFrom')).toBe(now - DAY);
+  });
+
   it('tells subscribers about changes, and only when something changed', async () => {
     const s = await open([entry('1', 1)]);
     const fn = vi.fn();
