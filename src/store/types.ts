@@ -19,7 +19,8 @@ export interface OutboxItem {
 export interface Progress {
   /** Where to carry on; undefined before the first page. */
   cursor?: string;
-  count: number;
+  /** Ids downloaded so far: once done, stored articles not among them are brought in line. */
+  ids: string[];
   done: boolean;
   /** Stopped at the limit: older articles in this state are on the server only. */
   truncated: boolean;
