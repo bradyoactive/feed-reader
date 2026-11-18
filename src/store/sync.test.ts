@@ -66,7 +66,7 @@ describe('Syncer', () => {
     expect(['1', '2', '3', '4'].map(store.has)).toEqual([true, true, true, false]);
     expect(store.getMeta('since')).toBe('s0+'); // took a starting point first, then caught up
     expect(store.getMeta('baseline')?.unread).toMatchObject({ done: true, truncated: false, ids: [] });
-    expect(syncer.getStatus()).toEqual({ syncing: false, downloading: null });
+    expect(syncer.getStatus()).toEqual({ syncing: false, downloading: null, error: null });
   });
 
   it('brings stored articles in line with the download', async () => {

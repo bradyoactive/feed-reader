@@ -1,9 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import type { Feed, Filter, Scope } from '../api/types';
+import type { Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
 import { withScheme } from '../api/http';
-import { queryKeys, useActions, useCategories, useFeeds } from '../hooks/data';
+import { useActions, useCategories, useFeeds, useStore } from '../hooks/data';
 import { useOnline } from '../lib/network';
 import { navigate, routeHash } from '../lib/route';
 import { toast } from '../lib/toast';
@@ -23,10 +22,10 @@ interface Props {
 
 /** "Add a feed": a feed address and a category (or a new one). A bottom sheet on phones, a dialog on desktop. */
 export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed }: Props) {
-  const categories = useCategories().data ?? [];
-  const feeds = useFeeds().data ?? [];
+  const categories = useCategories() ?? [];
+  const feeds = useFeeds() ?? [];
   const { subscribe } = useActions();
-  const qc = useQueryClient();
+  const store = useStore();
   const online = useOnline();
 
   const [url, setUrl] = useState('');
@@ -61,7 +60,7 @@ export function AddFeedDialog({ open, onOpenChange, scope, filter, onSubscribed 
         withScheme(address),
         category === NEW ? { newTitle: newTitle.trim() } : { id: category },
       );
-      const title = qc.getQueryData<Feed[]>(queryKeys.feeds)?.find((f) => f.id === id)?.title;
+      const title = store.getMeta('feeds')?.find((f) => f.id === id)?.title;
       toast(title ? `Subscribed to ${title}` : 'Subscribed');
       onOpenChange(false);
       onSubscribed?.();

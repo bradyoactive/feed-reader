@@ -1,151 +1,97 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
-import {
-  skipToken,
-  useInfiniteQuery,
-  useIsFetching,
-  useIsMutating,
-  useIsRestoring,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
-import type { Backend, Category, CategoryChoice, Entry, EntryPage, Feed, Filter, Scope } from '../api/types';
-import { describeError, UNCATEGORIZED } from '../api/types';
-import { retryConnection } from '../lib/network';
-import { scopeKey, setRouteNames } from '../lib/route';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { Backend, Category, CategoryChoice, Entry, Feed, Filter, Scope } from '../api/types';
+import { describeError, isNetworkError, UNCATEGORIZED } from '../api/types';
+import { useOnline } from '../lib/network';
 import { toast } from '../lib/toast';
-import { downloadOfflineSet, type OfflineSet } from './offline';
-import { patchCounts, patchPages, showWrite, WRITE, writesSettled, type Write } from './writes';
+import type { ArticleStore } from '../store/store';
+import type { SyncStatus, Syncer } from '../store/sync';
+import type { Counts, Meta } from '../store/types';
+import { useVisitMemory } from './visit';
 
-export const BackendContext = createContext<Backend | null>(null);
+/** One open connection: its server, the articles kept on the device, and what keeps them in step. */
+export interface Connection {
+  backend: Backend;
+  store: ArticleStore;
+  syncer: Syncer;
+}
 
-export interface SyncState {
-  /**
-   * When this connection last synced: the start of the initial load, or of the last Sync that succeeded.
-   * Saved with the cache, so it survives a restart.
-   */
-  last: number;
-  /** True from the start of a sync (the initial load counts as one) until everything it reloads is in. */
-  syncing: boolean;
+export const ConnectionContext = createContext<Connection | null>(null);
+
+function useConnection(): Connection {
+  const c = useContext(ConnectionContext);
+  if (!c) throw new Error('useConnection outside ConnectionContext');
+  return c;
+}
+
+export const useBackend = (): Backend => useConnection().backend;
+export const useStore = (): ArticleStore => useConnection().store;
+
+/** Changes whenever anything in the store does. */
+function useStoreVersion(): number {
+  const store = useStore();
+  return useSyncExternalStore(store.subscribe, store.getVersion);
+}
+
+/** One piece of the store's meta; the same object until it's replaced. */
+export function useMeta<K extends keyof Meta>(key: K): Meta[K] | undefined {
+  const store = useStore();
+  return useSyncExternalStore(store.subscribe, () => store.getMeta(key));
+}
+
+export function useSyncStatus(): SyncStatus {
+  const { syncer } = useConnection();
+  return useSyncExternalStore(syncer.subscribe, syncer.getStatus);
 }
 
 /** Feeds subscribed to in this session, so an empty list can say "fetching" instead of "all caught up". */
 const recentlyAdded = new Set<string>();
 export const isRecentlyAdded = (feedId: string) => recentlyAdded.has(feedId);
 
-const SYNC = ['sync'];
+/** When each connection was opened: until a sync succeeds, that's when it last synced. */
+const openedAt = new WeakMap<ArticleStore, number>();
 
-/** What Sync reloads: everything from the server except feed icons. */
-const SYNCED = new Set(['categories', 'feeds', 'counts', 'entries']);
-const isSynced = (q: { queryKey: readonly unknown[] }) => SYNCED.has(q.queryKey[0] as string);
-
-/** When each connection was opened: the initial load counts as its first sync. */
-const connectedAt = new WeakMap<Backend, number>();
-
-export function useBackend(): Backend {
-  const b = useContext(BackendContext);
-  if (!b) throw new Error('useBackend outside BackendContext');
-  if (!connectedAt.has(b)) connectedAt.set(b, Date.now());
-  return b;
+export interface SyncState {
+  /** When this connection last synced (the start of the last sync that succeeded). */
+  last: number;
+  syncing: boolean;
 }
 
 export function useSyncState(): SyncState {
-  const b = useBackend();
-  const qc = useQueryClient();
-  const syncing = useIsMutating({ mutationKey: SYNC }) > 0;
-  // The initial load counts as a sync: the lists, unread counts and the first article list loading for the first time.
-  const loading =
-    useIsFetching({
-      predicate: (q) => {
-        if (q.state.dataUpdatedAt > 0) return false;
-        const [kind, which] = q.queryKey;
-        if (kind === 'categories' || kind === 'feeds' || (kind === 'counts' && which === 'unread')) return true;
-        return kind === 'entries' && !qc.getQueryCache().findAll({ queryKey: ['entries'] }).some((e) => e.state.dataUpdatedAt > 0);
-      },
-    }) > 0;
-  const saved = useQuery<number>({ queryKey: keys.lastSync, queryFn: skipToken }).data;
-  return { syncing: syncing || loading, last: saved ?? connectedAt.get(b)! };
+  const store = useStore();
+  const { syncing } = useSyncStatus();
+  const last = useMeta('lastSync');
+  if (!openedAt.has(store)) openedAt.set(store, Date.now());
+  return { syncing, last: last ?? openedAt.get(store)! };
 }
 
-/**
- * Once the saved cache is restored: if it held anything, show it and Sync straight away (the launch counts
- * as a sync, as the initial load does without a saved cache). Otherwise the lists load as usual, and that
- * initial load is recorded as the last sync.
- */
-export function useSyncOnLaunch(sync: () => Promise<void>) {
-  const b = useBackend();
-  const qc = useQueryClient();
-  const restoring = useIsRestoring();
+/** Syncs once when the connection opens (what's saved shows meanwhile). */
+export function useSyncOnLaunch() {
+  const { syncer } = useConnection();
   const done = useRef(false);
   useEffect(() => {
-    if (restoring || done.current) return;
+    if (done.current) return;
     done.current = true;
-    if (qc.getQueryData(keys.lastSync) != null && qc.getQueryData(keys.feeds)) void sync();
-    else qc.setQueryData(keys.lastSync, connectedAt.get(b)!);
-  }, [restoring, qc, b, sync]);
+    syncer.sync().catch((err: unknown) => toast(describeError(err), 'error'));
+  }, [syncer]);
 }
 
-type Counts = Record<string, number>;
+export const useCategories = (): Category[] | undefined => useMeta('categories');
+export const useFeeds = (): Feed[] | undefined => useMeta('feeds');
+export const useUnreadCounts = (): Counts | undefined => useMeta('unread');
+export const useTotalCounts = (): Counts | null | undefined => useMeta('total');
 
-const keys = {
-  categories: ['categories'] as const,
-  feeds: ['feeds'] as const,
-  unread: ['counts', 'unread'] as const,
-  starred: ['counts', 'starred'] as const,
-  total: ['counts', 'total'] as const,
-  entries: (scope: Scope, filter: Filter) => ['entries', scopeKey(scope), filter] as const,
-  /** Unread and starred articles kept for offline reading (see hooks/offline). */
-  offline: ['offline'] as const,
-  /** When the last sync started (ms). Set here, never fetched. */
-  lastSync: ['meta', 'lastSync'] as const,
-};
-
-export function useCategories() {
-  const b = useBackend();
-  return useQuery({ queryKey: keys.categories, queryFn: () => b.getCategories(), staleTime: 5 * 60_000 });
+/** Starred articles per feed, counted on the device (every starred article is kept). */
+export function useStarredCounts(): Counts {
+  const store = useStore();
+  useStoreVersion();
+  return store.starredCounts();
 }
 
-export function useFeeds() {
-  const b = useBackend();
-  return useQuery({
-    queryKey: keys.feeds,
-    queryFn: async () =>
-      (await b.getFeeds())
-        .map((f) => ({ ...f, categoryId: f.categoryId ?? UNCATEGORIZED }))
-        .sort((a, c) => a.title.localeCompare(c.title)),
-    staleTime: 5 * 60_000,
-  });
-}
-
-// Counts load once, then change only with what you do here (optimistically) and when you press Sync:
-// never on a timer, and not again when another part of the screen starts showing them.
-
-export function useUnreadCounts() {
-  const b = useBackend();
-  return useQuery({ queryKey: keys.unread, queryFn: () => b.getUnreadCounts(), staleTime: Infinity });
-}
-
-export function useStarredCounts(enabled: boolean) {
-  const b = useBackend();
-  return useQuery({ queryKey: keys.starred, queryFn: () => b.getStarredCounts(), enabled, staleTime: Infinity });
-}
-
-/**
- * Unread and starred articles across all feeds, downloaded once the feed list is in and again after each
- * Sync, and saved with the cache so lists still work offline. Not part of syncing: it runs in the
- * background and doesn't hold up the sync indicator.
- */
-export function useOfflineSet(feeds: Feed[] | undefined) {
-  const b = useBackend();
-  return useQuery<OfflineSet>({
-    queryKey: keys.offline,
-    queryFn: () => downloadOfflineSet(b, feeds ?? []),
-    // Demo data lives in this tab only; there's nothing to keep.
-    enabled: !!feeds && b.kind !== 'demo',
-    staleTime: Infinity,
-    gcTime: Infinity,
-    retry: false,
-  });
+/** How many articles have changes waiting to reach the server. */
+export function usePendingCount(): number {
+  const store = useStore();
+  useStoreVersion();
+  return store.pendingCount();
 }
 
 /** Feed ids a scope covers. */
@@ -155,20 +101,113 @@ export function feedsInScope(scope: Scope, feeds: Feed[]): Set<string> {
   return new Set(feeds.map((f) => f.id));
 }
 
-/** `ready` is false while the view in the URL is still being matched to a feed or category. */
-export function useEntries(scope: Scope, filter: Filter, feeds: Feed[] | undefined, ready = true) {
-  const b = useBackend();
-  const feedIds = useMemo(() => (feeds ? feedsInScope(scope, feeds) : new Set<string>()), [scope, feeds]);
-  return useInfiniteQuery({
-    queryKey: keys.entries(scope, filter),
-    enabled: !!feeds && ready,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }): Promise<EntryPage> => b.getEntries({ scope, filter, cursor: pageParam, feedIds }),
-    getNextPageParam: (last) => last.nextCursor,
-    // The list is a snapshot: items you read stay (dimmed) until you change view or refresh.
-    staleTime: Infinity,
-    gcTime: 60_000,
+const matches = (filter: Filter) => (e: Entry) => (filter === 'unread' ? !e.read : filter === 'starred' ? e.starred : true);
+
+/** How many articles a list wants before it stops fetching older ones by itself. */
+const FILL = 30;
+
+export interface ArticleList {
+  entries: Entry[];
+  /** Fetching older articles from the server. */
+  loadingMore: boolean;
+  /** More can be fetched from the server (online, and the device doesn't have them all). */
+  hasMore: boolean;
+  loadMore(): void;
+  /** Why fetching older articles failed, if the list has nothing to show. */
+  error: unknown;
+}
+
+/**
+ * The articles for a view, from the store. The list is a snapshot for the visit: what's in it is chosen
+ * when the view opens, when a sync or the first download finishes, and when older articles are fetched,
+ * so articles don't jump in or out while you read. Their read and starred states are always current, and
+ * one you read stays (dimmed) until you leave.
+ *
+ * Past the end of what's stored (under All, or while the first download hasn't reached this view) older
+ * articles are fetched from the server, saved, and added to the end.
+ */
+export function useArticleList(scope: Scope, filter: Filter, viewKey: string, ready: boolean): ArticleList {
+  const { store, backend } = useConnection();
+  const version = useStoreVersion();
+  const feeds = useFeeds();
+  const baseline = useMeta('baseline');
+  const { syncing, downloading } = useSyncStatus();
+  const online = useOnline();
+  const keep = useVisitMemory(viewKey);
+
+  const feedIds = useMemo(() => (feeds ? feedsInScope(scope, feeds) : new Set<string>()), [viewKey, feeds]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Taken again when a sync or the download finishes, or after fetching older articles.
+  const [epoch, setEpoch] = useState(0);
+  const busy = syncing || !!downloading;
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    if (wasBusy.current && !busy) setEpoch((n) => n + 1);
+    wasBusy.current = busy;
+  }, [busy]);
+
+  const ids = useMemo(
+    () => (ready ? store.list(feedIds, (e) => keep(e.id, matches(filter)(e))).map((e) => e.id) : []),
+    [store, feedIds, filter, keep, ready, epoch], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const entries = useMemo(() => ids.map((id) => store.get(id)).filter((e): e is Entry => !!e), [ids, version]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetching older articles: one chain of server pages per visit.
+  const chain = useRef<{ key: string; cursor?: string; started: boolean; exhausted: boolean; error: unknown }>({
+    key: viewKey,
+    started: false,
+    exhausted: false,
+    error: null,
   });
+  if (chain.current.key !== viewKey) chain.current = { key: viewKey, started: false, exhausted: false, error: null };
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Unread and starred are complete on the device once downloaded (unless there were too many); All never is.
+  const progress = filter === 'all' ? undefined : baseline?.[filter];
+  const deviceHasAll = !!progress?.done && !progress.truncated;
+  const hasMore = ready && !!feeds && online && !deviceHasAll && !chain.current.exhausted && !chain.current.error;
+
+  const loadMore = useCallback(() => {
+    const c = chain.current;
+    if (loadingMore || c.exhausted || c.error) return;
+    const oldest = entries.at(-1);
+    setLoadingMore(true);
+    const asked = Date.now();
+    backend
+      .getEntries(c.started ? { scope, filter, feedIds, cursor: c.cursor } : { scope, filter, feedIds, before: oldest?.published })
+      .then(
+        (page) => {
+          if (chain.current !== c) return;
+          c.started = true;
+          c.cursor = page.nextCursor;
+          c.exhausted = !page.nextCursor;
+          store.putFromServer(page.entries, asked);
+          setEpoch((n) => n + 1);
+        },
+        (err: unknown) => {
+          if (chain.current !== c) return;
+          // Offline: the list ends where the device's copy does. Anything else is said once.
+          if (!isNetworkError(err)) toast(describeError(err), 'error');
+          c.error = err;
+        },
+      )
+      .finally(() => setLoadingMore(false));
+  }, [backend, store, scope, filter, feedIds, entries, loadingMore]);
+
+  // Back online after fetching failed for want of a connection: try again.
+  useEffect(() => {
+    if (online && isNetworkError(chain.current.error)) {
+      chain.current.error = null;
+      setEpoch((n) => n + 1);
+    }
+  }, [online]);
+
+  // A short list fetches older articles by itself (its end is already on screen).
+  useEffect(() => {
+    if (hasMore && !loadingMore && entries.length < FILL) loadMore();
+  }, [hasMore, loadingMore, entries.length, loadMore]);
+
+  return { entries, loadingMore, hasMore, loadMore, error: entries.length ? null : chain.current.error };
 }
 
 export interface Actions {
@@ -181,134 +220,44 @@ export interface Actions {
   unsubscribe(feed: Feed): void;
 }
 
-/**
- * Every write updates the screen first, then tells the server (see hooks/writes: without a connection,
- * changes wait and are sent later). If the server refuses one, everything is reloaded from the server so
- * the screen is honest again.
- */
+/** Every change applies on the device first, then goes to the server (see store/sync). */
 export function useActions(): Actions {
-  const b = useBackend();
-  const qc = useQueryClient();
-
-  const resync = useCallback(
-    (err: unknown) => {
-      toast(describeError(err), 'error');
-      void qc.invalidateQueries();
-    },
-    [qc],
-  );
-
-  // How to send is set per connection with setMutationDefaults (registerWrites), so saved writes can resume.
-  const { mutate: write } = useMutation<void, Error, Write>({ mutationKey: WRITE });
-
-  // Reload everything from the server. The server fetches feeds on its own schedule; this doesn't ask it to.
-  const { mutateAsync: runSync } = useMutation({
-    mutationKey: SYNC,
-    mutationFn: async () => {
-      const startedAt = Date.now();
-      // Pressing Sync is a good moment to find out whether the connection is back: unsent changes go now.
-      retryConnection();
-      // Wait for your changes to reach the server first. A change made while the reload runs is
-      // overwritten by it, so then wait for that one too and reload again (a few times at most).
-      for (let i = 0; i < 3; i++) {
-        await writesSettled(qc);
-        const reloadAt = Date.now();
-        // Lists on screen reload now (every loaded page); the others reload when you next open them.
-        await qc.invalidateQueries({ predicate: isSynced });
-        const wroteMeanwhile = qc
-          .getMutationCache()
-          .findAll({ mutationKey: WRITE })
-          .some((m) => m.state.submittedAt >= reloadAt);
-        if (!wroteMeanwhile) break;
-      }
-      const failed = qc.getQueryCache().findAll({ type: 'active', predicate: isSynced }).find((q) => q.state.status === 'error');
-      if (failed) throw failed.state.error;
-      qc.setQueryData(keys.lastSync, startedAt);
-      // Then, in the background, refresh what's kept for reading offline.
-      void qc.invalidateQueries({ queryKey: keys.offline });
-    },
-    onError: (err) => toast(describeError(err), 'error'),
-  });
-
-  const setRead = useCallback(
-    (entries: Entry[], read: boolean) => {
-      const changing = entries.filter((e) => e.read !== read);
-      if (changing.length === 0) return;
-      const w: Write = { field: 'read', entries: changing.map(({ id, feedId }) => ({ id, feedId })), value: read };
-      showWrite(qc, w);
-      write(w);
-    },
-    [qc, write],
-  );
-
-  const setStarred = useCallback(
-    (entry: Entry, starred: boolean) => {
-      if (entry.starred === starred) return;
-      const w: Write = { field: 'starred', entries: [{ id: entry.id, feedId: entry.feedId }], value: starred };
-      showWrite(qc, w);
-      write(w);
-    },
-    [qc, write],
-  );
-
-  const sync = useCallback(async () => {
-    if (qc.isMutating({ mutationKey: SYNC }) > 0) return; // one at a time
-    await runSync().catch(() => {}); // failures are shown by onError
-  }, [qc, runSync]);
-
-  const subscribe = useCallback(
-    async (url: string, category: CategoryChoice) => {
-      const id = await b.subscribe(url, category);
-      recentlyAdded.add(id);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.feeds }),
-        qc.invalidateQueries({ queryKey: keys.categories }),
-        qc.invalidateQueries({ queryKey: ['counts'] }),
-      ]);
-      // Let the router know the new feed's name now, so navigating to it straight away resolves.
-      setRouteNames(qc.getQueryData<Category[]>(keys.categories) ?? null, qc.getQueryData<Feed[]>(keys.feeds) ?? null);
-      return id;
-    },
-    [b, qc],
-  );
-
-  const unsubscribe = useCallback(
-    (feed: Feed) => {
-      qc.setQueryData<Feed[]>(keys.feeds, (fs) => fs?.filter((f) => f.id !== feed.id));
-      patchCounts(qc, ['counts'], (c) => delete c[feed.id]);
-      patchPages(qc, (es) => es.filter((e) => e.feedId !== feed.id));
-      b.unsubscribe(feed.id)
-        .then(() => {
-          toast(`Unsubscribed from ${feed.title}`);
-          // A category the server dropped along with its last feed disappears on this reload.
-          void qc.invalidateQueries({ queryKey: keys.categories });
-        })
-        .catch(resync);
-    },
-    [b, qc, resync],
-  );
-
+  const { syncer } = useConnection();
   return useMemo(
-    () => ({ setRead, setStarred, sync, subscribe, unsubscribe }),
-    [setRead, setStarred, sync, subscribe, unsubscribe],
+    () => ({
+      setRead(entries, read) {
+        const changing = entries.filter((e) => e.read !== read);
+        if (changing.length) syncer.write({ field: 'read', entries: changing.map(({ id, feedId }) => ({ id, feedId })), value: read });
+      },
+      setStarred(entry, starred) {
+        if (entry.starred !== starred) syncer.write({ field: 'starred', entries: [{ id: entry.id, feedId: entry.feedId }], value: starred });
+      },
+      sync: () => syncer.sync().catch((err: unknown) => toast(describeError(err), 'error')),
+      async subscribe(url, category) {
+        const id = await syncer.addFeed(url, category);
+        recentlyAdded.add(id);
+        return id;
+      },
+      unsubscribe(feed) {
+        syncer.removeFeed(feed).then(
+          () => toast(`Unsubscribed from ${feed.title}`),
+          (err: unknown) => toast(describeError(err), 'error'),
+        );
+      },
+    }),
+    [syncer],
   );
-}
-
-export function useTotalCounts(enabled: boolean) {
-  const b = useBackend();
-  return useQuery({ queryKey: keys.total, queryFn: () => b.getTotalCounts(), enabled, staleTime: Infinity });
 }
 
 /**
  * Counts shown in the sidebar for the current filter: unread under Unread, starred under Starred,
- * everything under All. Empty while loading; servers that can't report totals give no counts under All.
+ * everything under All. Servers that can't report totals give no counts under All.
  */
 export function useSidebarCounts(filter: Filter): Counts {
   const unread = useUnreadCounts();
-  const starred = useStarredCounts(filter === 'starred');
-  const total = useTotalCounts(filter === 'all');
-  const q = filter === 'starred' ? starred : filter === 'all' ? total : unread;
-  return q.data ?? {};
+  const starred = useStarredCounts();
+  const total = useTotalCounts();
+  return (filter === 'starred' ? starred : filter === 'all' ? total : unread) ?? {};
 }
 
 export interface SidebarModel {
@@ -317,8 +266,8 @@ export interface SidebarModel {
 }
 
 export function useSidebarModel(): SidebarModel | null {
-  const cats = useCategories().data;
-  const feeds = useFeeds().data;
+  const cats = useCategories();
+  const feeds = useFeeds();
   return useMemo(() => {
     if (!cats || !feeds) return null;
     const feedsByCategory = new Map<string, Feed[]>();
@@ -333,5 +282,3 @@ export function useSidebarModel(): SidebarModel | null {
     return { categories: categories.filter((c) => feedsByCategory.has(c.id)), feedsByCategory };
   }, [cats, feeds]);
 }
-
-export { keys as queryKeys };

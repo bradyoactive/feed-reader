@@ -1,67 +1,63 @@
-import { useMemo, useState } from 'react';
-import { MutationCache, QueryCache, QueryClient, QueryClientProvider, type Mutation, type Query } from '@tanstack/react-query';
-import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createBackend } from './api';
-import { AuthError, isNetworkError } from './api/types';
+import { AuthError } from './api/types';
 import { ConnectScreen } from './components/ConnectScreen';
 import { Reader } from './components/Reader';
 import { Toasts } from './components/Toasts';
-import { BackendContext } from './hooks/data';
-import { registerWrites, WRITE } from './hooks/writes';
-import { cacheKey, clearConnection, loadConnection, saveConnection, type ConnectionConfig } from './lib/storage';
-import { idbPersister } from './lib/persist';
+import { ConnectionContext, type Connection } from './hooks/data';
+import { clearConnection, databaseName, loadConnection, saveConnection, type ConnectionConfig } from './lib/storage';
 import { navigate, useRoute } from './lib/route';
-
-/** What's kept on the device between launches, so Skim opens with your lists and works offline. */
-const PERSISTED = new Set(['categories', 'feeds', 'counts', 'entries', 'offline', 'feedIcon', 'meta']);
+import { idbPersistence, memoryPersistence } from './store/persistence';
+import { ArticleStore } from './store/store';
+import { Syncer } from './store/sync';
 
 /**
- * The cache is saved in IndexedDB per connection. A query that failed to reload (offline) still has its
- * last good data, and that is what's kept.
+ * Opens a connection: its articles saved on the device (in memory only for the demo, or when the browser
+ * won't let Skim keep data), and the syncer that keeps them in step with the server. Changes still waiting
+ * from last time are sent straight away.
  */
-const persistOptions = (config: ConnectionConfig) => ({
-  persister: idbPersister(cacheKey(config)),
-  maxAge: 30 * 86_400_000,
-  // Bump when the saved shapes change, so an old cache is dropped instead of misread.
-  buster: 'offline-1',
-  dehydrateOptions: {
-    shouldDehydrateQuery: (q: Query) => q.state.data !== undefined && PERSISTED.has(q.queryKey[0] as string),
-    // Every change not yet confirmed by the server, waiting or on its way.
-    shouldDehydrateMutation: (m: Mutation) => m.state.status === 'pending' && m.options.mutationKey?.[0] === WRITE[0],
-  },
-});
+function useOpenConnection(config: ConnectionConfig | null, onAuthError: (err: AuthError) => void): Connection | null {
+  const [opened, setOpened] = useState<{ config: ConnectionConfig; connection: Connection } | null>(null);
+  const authError = useRef(onAuthError);
+  authError.current = onAuthError;
+
+  useEffect(() => {
+    if (!config) return;
+    let closed = false;
+    let syncer: Syncer | undefined;
+    const backend = createBackend(config);
+    const persistence = config.kind === 'demo' ? memoryPersistence() : idbPersistence(databaseName(config));
+    void ArticleStore.open(persistence)
+      .catch(() => ArticleStore.open(memoryPersistence()))
+      .then((store) => {
+        if (closed) return;
+        syncer = new Syncer(store, backend, (err) => authError.current(err));
+        setOpened({ config, connection: { backend, store, syncer } });
+        syncer.send();
+      });
+    return () => {
+      closed = true;
+      syncer?.close();
+      setOpened(null);
+    };
+  }, [config]);
+
+  // Only once it's this config's: never the previous account's for a moment.
+  return opened?.config === config ? opened.connection : null;
+}
 
 export function App() {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => loadConnection());
   const [authError, setAuthError] = useState<string | null>(null);
   const route = useRoute();
 
-  // A fresh backend and cache per connection, so nothing leaks between accounts.
-  const session = useMemo(() => {
-    if (!config) return null;
-    const onError = (err: unknown) => {
-      if (err instanceof AuthError) setAuthError('Your server rejected the saved credentials. Please sign in again.');
-    };
-    const client = new QueryClient({
-      queryCache: new QueryCache({ onError }),
-      mutationCache: new MutationCache({ onError }),
-      defaultOptions: {
-        queries: {
-          // Without a connection there's no point retrying: fail at once and keep showing what's saved.
-          retry: (n, err) => !(err instanceof AuthError) && !isNetworkError(err) && n < 2,
-          refetchOnWindowFocus: false,
-          // Always try the server (navigator.onLine can't be trusted), and fall back to saved data.
-          networkMode: 'offlineFirst',
-        },
-        // Sync and subscribing fail straight away offline (as fetch does) rather than pausing, so they never
-        // wait forever. Read/star writes pause instead (their own defaults, in registerWrites).
-        mutations: { networkMode: 'always' },
-      },
-    });
-    const backend = createBackend(config);
-    registerWrites(client, backend);
-    return { backend, client, persist: config.kind === 'demo' ? null : persistOptions(config) };
-  }, [config]);
+  const connection = useOpenConnection(config, () => setAuthError('Your server rejected the saved credentials. Please sign in again.'));
+  // Only feed icons are fetched through React Query now; a fresh client per connection.
+  const queryClient = useMemo(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, networkMode: 'always' } } }),
+    [config], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   const connect = (next: ConnectionConfig, remember: boolean) => {
     saveConnection(next, remember);
@@ -78,7 +74,7 @@ export function App() {
     navigate('#/');
   };
 
-  const showConnect = !session || route.page === 'settings' || authError;
+  const showConnect = !config || route.page === 'settings' || authError;
 
   return (
     <>
@@ -91,22 +87,14 @@ export function App() {
           onBack={config && !authError ? () => navigate('#/') : undefined}
         />
       ) : (
-        <BackendContext.Provider value={session.backend}>
-          {session.persist ? (
-            <PersistQueryClientProvider
-              client={session.client}
-              persistOptions={session.persist}
-              // Changes saved while offline (or mid-send when the app closed) go to the server now.
-              onSuccess={() => session.client.resumePausedMutations()}
-            >
-              <Reader connection={config!} />
-            </PersistQueryClientProvider>
-          ) : (
-            <QueryClientProvider client={session.client}>
-              <Reader connection={config!} />
+        // Blank for the moment it takes to open what's saved on the device.
+        connection && (
+          <ConnectionContext.Provider value={connection}>
+            <QueryClientProvider client={queryClient}>
+              <Reader connection={config} />
             </QueryClientProvider>
-          )}
-        </BackendContext.Provider>
+          </ConnectionContext.Provider>
+        )
       )}
       <Toasts />
     </>

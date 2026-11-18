@@ -15,6 +15,8 @@ export interface SyncStatus {
   syncing: boolean;
   /** The first download of unread and starred articles is running, with how many have arrived. */
   downloading: { count: number } | null;
+  /** Why the last sync failed; null once one succeeds. */
+  error: unknown;
 }
 
 const emptyProgress = (): Progress => ({ ids: [], done: false, truncated: false });
@@ -33,7 +35,7 @@ export const sortFeeds = (feeds: Feed[]): Feed[] =>
  *   background, resuming where it stopped after a restart.
  */
 export class Syncer {
-  private status: SyncStatus = { syncing: false, downloading: null };
+  private status: SyncStatus = { syncing: false, downloading: null, error: null };
   private listeners = new Set<() => void>();
   private sending = false;
   private running: Promise<void> | null = null;
@@ -128,10 +130,19 @@ export class Syncer {
 
   /** Reloads lists and counts and fetches what changed; one at a time. Rejects with the reason it failed. */
   sync(): Promise<void> {
-    this.running ??= this.runSync().finally(() => {
-      this.running = null;
-      this.setStatus({ syncing: false });
-    });
+    this.running ??= this.runSync()
+      .then(
+        () => this.setStatus({ error: null }),
+        (err: unknown) => {
+          if (err instanceof AuthError) this.onAuthError(err);
+          this.setStatus({ error: err });
+          throw err;
+        },
+      )
+      .finally(() => {
+        this.running = null;
+        this.setStatus({ syncing: false });
+      });
     return this.running;
   }
 

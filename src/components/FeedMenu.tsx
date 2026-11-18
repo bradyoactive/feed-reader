@@ -46,8 +46,8 @@ export function FeedMenu({
 
 /** "Unsubscribe from X?" — always asked, because the server deletes the feed's articles, starred ones included. */
 export function UnsubscribeConfirm({ feed, onConfirm, onClose }: { feed: Feed; onConfirm(): void; onClose(): void }) {
-  const total = useTotalCounts(true).data?.[feed.id];
-  const starred = useStarredCounts(true).data?.[feed.id] ?? 0;
+  const total = useTotalCounts()?.[feed.id];
+  const starred = useStarredCounts()[feed.id] ?? 0;
   const articles = total != null ? `its ${total} article${total === 1 ? '' : 's'}` : 'its articles';
 
   return (

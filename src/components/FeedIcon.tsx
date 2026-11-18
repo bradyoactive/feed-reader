@@ -1,22 +1,29 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Feed } from '../api/types';
-import { useBackend } from '../hooks/data';
+import { useBackend, useMeta, useStore } from '../hooks/data';
 import { feedColor, feedInitial } from '../lib/feedColor';
 
-/** The feed's favicon: a direct URL, or one fetched through the API (Miniflux) and cached. */
+/** The feed's favicon: a direct URL, or one fetched through the API (Miniflux) and saved on the device. */
 function useFeedIconUrl(feed: Feed | undefined): string | null {
   const b = useBackend();
+  const store = useStore();
+  const saved = useMeta('icons');
   const iconId = feed && !feed.iconUrl ? feed.iconId : undefined;
-  const fetched = useQuery({
+  const known = iconId != null && saved != null && iconId in saved;
+  // One request per icon however many places show it; the result is saved, so it's fetched once.
+  useQuery({
     queryKey: ['feedIcon', iconId],
-    queryFn: () => b.getFeedIcon!(iconId!),
-    enabled: !!iconId && !!b.getFeedIcon,
+    queryFn: async () => {
+      const url = await b.getFeedIcon!(iconId!);
+      store.setMeta({ icons: { ...store.getMeta('icons'), [iconId!]: url } });
+      return url;
+    },
+    enabled: !!iconId && !!b.getFeedIcon && !known,
     staleTime: Infinity,
-    gcTime: Infinity,
     retry: false,
   });
-  return feed?.iconUrl ?? fetched.data ?? null;
+  return feed?.iconUrl ?? (iconId ? saved?.[iconId] : null) ?? null;
 }
 
 interface Props {

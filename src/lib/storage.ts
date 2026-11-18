@@ -37,6 +37,9 @@ const session = store('sessionStorage');
 /** Where a connection's saved query cache (lists, counts, articles, icons and unsent changes) lives in IndexedDB. */
 export const cacheKey = (config: ConnectionConfig) => `skim.cache.${config.kind === 'demo' ? 'demo' : config.url}`;
 
+/** The IndexedDB database holding a connection's articles, feeds, counts and unsent changes. */
+export const databaseName = (config: ConnectionConfig) => `skim:${config.kind}:${config.kind === 'demo' ? '' : config.url}`;
+
 // Feed icons used to be cached one per key, and then the query cache was kept in localStorage;
 // it lives in IndexedDB now.
 try {
@@ -66,6 +69,13 @@ export function saveConnection(config: ConnectionConfig, remember: boolean) {
 export function clearConnection() {
   const config = loadConnection();
   if (config) void idbDelete(cacheKey(config)).catch(() => {});
+  if (config && config.kind !== 'demo') {
+    try {
+      indexedDB.deleteDatabase(databaseName(config));
+    } catch {
+      /* nothing saved */
+    }
+  }
   write(local, CONFIG_KEY, null);
   write(session, CONFIG_KEY, null);
 }

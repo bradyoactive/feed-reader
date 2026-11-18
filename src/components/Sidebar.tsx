@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { ChevronRight, CloudOff, Inbox, Monitor, Moon, Plus, RefreshCw, Rss, SlidersHorizontal, Sun } from 'lucide-react';
 import { connectionLabel } from '../api';
 import type { Feed, Filter, Scope } from '../api/types';
-import { useActions, useSidebarCounts, useSidebarModel, useSyncState } from '../hooks/data';
+import { useActions, usePendingCount, useSidebarCounts, useSidebarModel, useSyncState, useSyncStatus } from '../hooks/data';
 import { useVisitMemory } from '../hooks/visit';
-import { usePendingCount } from '../hooks/writes';
 import { offlineLabel, useOnline } from '../lib/network';
 import { FeedIcon } from './FeedIcon';
 import { navigate, routeHash, scopeKey } from '../lib/route';
@@ -124,9 +123,12 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const synced = useRelativeTime(last);
   const online = useOnline();
   const pending = usePendingCount();
+  const { downloading } = useSyncStatus();
   const waiting = pending ? `, ${pending} change${pending === 1 ? '' : 's'} waiting to be sent` : '';
   const syncLabel = syncing
     ? 'Syncing'
+    : downloading
+      ? `Downloading your unread and starred articles for reading offline (${downloading.count.toLocaleString()} so far)`
     : online
       ? `Sync with server (last synced ${synced}${waiting})`
       : `${offlineLabel() === 'offline' ? 'Offline' : 'Can’t reach your server'}: showing what’s saved on this device${waiting}. Last synced ${synced}. Press to try again`;
@@ -294,11 +296,11 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
           className={`ml-auto flex ${touch ? 'h-11' : 'h-[38px]'} flex-none items-center gap-1.5 rounded-lg px-2.5 text-xs whitespace-nowrap text-muted2 hover:bg-seg-bg`}
         >
           {online || syncing ? (
-            <RefreshCw size={18} aria-hidden className={syncing ? 'animate-spin' : ''} />
+            <RefreshCw size={18} aria-hidden className={syncing || downloading ? 'animate-spin' : ''} />
           ) : (
             <CloudOff size={18} aria-hidden />
           )}
-          {syncing ? 'syncing…' : online ? synced : 'offline'}
+          {syncing ? 'syncing…' : downloading && online ? 'downloading…' : online ? synced : 'offline'}
           {pending > 0 && !syncing && (
             <span aria-hidden className="rounded-full bg-seg-bg px-1.5 py-px text-[11px] font-semibold text-muted2">
               {pending}
