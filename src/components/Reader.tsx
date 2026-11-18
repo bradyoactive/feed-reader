@@ -153,6 +153,22 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
     if (decodeURIComponent(location.hash) !== decodeURIComponent(canonical)) location.replace(canonical);
   }, [page, ready, scope, filter]);
 
+  // Opening on the default view (All, unread): go to the first category, in sidebar order, with unread
+  // articles instead. Decided once, as soon as the categories and unread counts are known; if the
+  // user moves somewhere else first, or nothing is unread, the view is left alone.
+  const pickStart = useRef(scope.kind === 'all' && filter === 'unread' && page === 'reader');
+  useEffect(() => {
+    if (!pickStart.current) return;
+    if (page !== 'reader' || scope.kind !== 'all' || filter !== 'unread') {
+      pickStart.current = false;
+      return;
+    }
+    if (!model || !unread) return;
+    pickStart.current = false;
+    const first = model.categories.find((c) => (model.feedsByCategory.get(c.id) ?? []).some((f) => (unread[f.id] ?? 0) > 0));
+    if (first) location.replace(routeHash({ kind: 'category', id: first.id }, 'unread'));
+  }, [page, scope.kind, filter, model, unread]);
+
   const [sideW, setSideW] = useState(() => clampSidebar(loadPref('sidebarWidth', SIDEBAR_DEFAULT)));
   const [drawerOpen, setDrawerOpen] = useState(false);
   // True while the drawer is following a finger (opening by swipe); it starts off-screen.
