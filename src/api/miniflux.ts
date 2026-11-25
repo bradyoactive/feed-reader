@@ -2,7 +2,7 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle } from '../lib/html';
 import { joinUrl, request } from './http';
 import { UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, Filter, Scope } from './types';
+import type { Backend, Category, CategoryChoice, FeedChanges, FeedField, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, Filter, Scope } from './types';
 
 const PAGE_SIZE = 50;
 const CHANGES_PAGE = 250;
@@ -17,7 +17,7 @@ export interface MinifluxConfig {
 }
 
 interface MfCategory { id: number; title: string }
-interface MfFeed { id: number; title: string; site_url: string; category?: MfCategory | null; icon?: { icon_id: number } | null }
+interface MfFeed { id: number; title: string; site_url: string; feed_url: string; category?: MfCategory | null; icon?: { icon_id: number } | null }
 interface MfEnclosure { url: string; mime_type: string }
 interface MfEntry {
   id: number;
@@ -69,6 +69,7 @@ export function toEntry(e: MfEntry): Entry {
 
 export class MinifluxBackend implements Backend {
   readonly kind = 'miniflux' as const;
+  readonly editableFeedFields: ReadonlySet<FeedField> = new Set(['title', 'category', 'feedUrl', 'siteUrl']);
   private readonly config: MinifluxConfig;
 
   constructor(config: MinifluxConfig) {
@@ -91,6 +92,7 @@ export class MinifluxBackend implements Backend {
       title: f.title,
       categoryId: f.category ? String(f.category.id) : null,
       siteUrl: f.site_url,
+      feedUrl: f.feed_url,
       iconId: f.icon?.icon_id ? String(f.icon.icon_id) : undefined,
     }));
   }
@@ -215,14 +217,17 @@ export class MinifluxBackend implements Backend {
     return { entries, removed, next: String(next) };
   }
 
-  async subscribe(url: string, category: CategoryChoice): Promise<string> {
-    let categoryId: number | undefined;
+  /** The category id for a choice, creating a new category first if asked; undefined for none. */
+  private async categoryId(category: CategoryChoice): Promise<number | undefined> {
     if ('newTitle' in category) {
       const created = await this.call<MfCategory>('/v1/categories', { method: 'POST', body: JSON.stringify({ title: category.newTitle }) });
-      categoryId = created.id;
-    } else if (category.id !== UNCATEGORIZED) {
-      categoryId = Number(category.id);
+      return created.id;
     }
+    return category.id !== UNCATEGORIZED ? Number(category.id) : undefined;
+  }
+
+  async subscribe(url: string, category: CategoryChoice): Promise<string> {
+    const categoryId = await this.categoryId(category);
     // Miniflux fetches and checks the feed before answering, so a bad address fails here.
     const r = await this.call<{ feed_id: number }>('/v1/feeds', {
       method: 'POST',
@@ -233,6 +238,20 @@ export class MinifluxBackend implements Backend {
 
   async unsubscribe(feedId: string): Promise<void> {
     await this.call(`/v1/feeds/${feedId}`, { method: 'DELETE' });
+  }
+
+  async updateFeed(feed: Feed, { title, category, feedUrl, siteUrl }: FeedChanges): Promise<void> {
+    const body: Record<string, unknown> = {};
+    if (title != null) body.title = title;
+    if (feedUrl != null) body.feed_url = feedUrl;
+    if (siteUrl != null) body.site_url = siteUrl;
+    if (category) {
+      const id = await this.categoryId(category);
+      // Every Miniflux feed is in a category, so "none" leaves it where it is.
+      if (id != null) body.category_id = id;
+    }
+    // Miniflux answers 201 with the updated feed; it refuses an address another feed already has.
+    await this.call(`/v1/feeds/${feed.id}`, { method: 'PUT', body: JSON.stringify(body) });
   }
 
   async setRead(entries: EntryRef[], read: boolean): Promise<void> {

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { Backend, Category, CategoryChoice, Entry, Feed, Filter, Scope } from '../api/types';
+import type { Backend, Category, CategoryChoice, Entry, Feed, FeedChanges, Filter, Scope } from '../api/types';
 import { describeError, isNetworkError, UNCATEGORIZED } from '../api/types';
 import { useOnline } from '../lib/network';
 import { toast } from '../lib/toast';
@@ -226,6 +226,8 @@ export interface Actions {
   subscribe(url: string, category: CategoryChoice): Promise<string>;
   /** Removes the feed from the screen at once, then tells the server. */
   unsubscribe(feed: Feed): void;
+  /** Changes a feed's details on the server, then reloads the feed list; rejects with the server's reason. */
+  editFeed(feed: Feed, changes: FeedChanges): Promise<void>;
 }
 
 /** Every change applies on the device first, then goes to the server (see store/sync). */
@@ -252,6 +254,7 @@ export function useActions(): Actions {
           (err: unknown) => toast(describeError(err), 'error'),
         );
       },
+      editFeed: (feed, changes) => syncer.editFeed(feed, changes),
     }),
     [syncer],
   );

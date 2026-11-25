@@ -167,6 +167,24 @@ describe('miniflux', () => {
     expect(String(f.mock.calls[1][0])).toBe('https://rss.test/v1/icons/501');
   });
 
+  it('reads feed addresses, and updates a feed with PUT', async () => {
+    const calls: { path: string; method?: string; body?: unknown }[] = [];
+    mockFetch((url, init) => {
+      calls.push({ path: url.pathname, method: init.method, body: init.body && JSON.parse(String(init.body)) });
+      if (url.pathname === '/v1/feeds') return [{ id: 3, title: 'A', site_url: 'https://a.test', feed_url: 'https://a.test/rss', category: { id: 1, title: 'C' } }];
+      if (url.pathname === '/v1/categories') return { id: 12, title: 'Blogs' };
+      return { id: 3 };
+    });
+    const b = new MinifluxBackend(config);
+    const [feed] = await b.getFeeds();
+    expect(feed.feedUrl).toBe('https://a.test/rss');
+    await b.updateFeed(feed, { title: 'B', feedUrl: 'https://a.test/atom', siteUrl: 'https://b.test', category: { newTitle: 'Blogs' } });
+    expect(calls.slice(1)).toEqual([
+      { path: '/v1/categories', method: 'POST', body: { title: 'Blogs' } },
+      { path: '/v1/feeds/3', method: 'PUT', body: { title: 'B', feed_url: 'https://a.test/atom', site_url: 'https://b.test', category_id: 12 } },
+    ]);
+  });
+
   it('unsubscribes with DELETE', async () => {
     const f = mockFetch(() => undefined);
     await new MinifluxBackend(config).unsubscribe('42');

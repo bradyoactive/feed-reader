@@ -149,6 +149,30 @@ describe('greader', () => {
     await expect(new GReaderBackend(config).subscribe('https://nope.test', { id: 'user/-/label/Tech' })).rejects.toThrow(/couldn’t subscribe/);
   });
 
+  it('renames and moves a feed with subscription/edit, and reads its address', async () => {
+    const bodies: URLSearchParams[] = [];
+    mockFetch((url, init) => {
+      if (url.pathname.endsWith('/token')) return new Response('T');
+      if (url.pathname.endsWith('/subscription/list')) {
+        return json({ subscriptions: [
+          { id: 'feed/5', title: 'A', url: 'https://a.test/rss', categories: [{ id: 'user/-/label/Tech', label: 'Tech' }] },
+          { id: 'feed/https://b.test/atom', title: 'B' },
+        ] });
+      }
+      bodies.push(new URLSearchParams(String(init.body)));
+      return new Response('OK');
+    });
+    const b = new GReaderBackend(config);
+    const [feed, other] = await b.getFeeds();
+    expect(feed.feedUrl).toBe('https://a.test/rss');
+    expect(other.feedUrl).toBe('https://b.test/atom');
+    expect([...b.editableFeedFields]).toEqual(['title', 'category']);
+    await b.updateFeed(feed, { title: 'New name', category: { id: 'user/-/label/News' } });
+    expect([...bodies[0]]).toEqual([['ac', 'edit'], ['s', 'feed/5'], ['t', 'New name'], ['r', 'user/-/label/Tech'], ['a', 'user/-/label/News'], ['T', 'T']]);
+    await b.updateFeed(feed, { category: { id: UNCATEGORIZED } });
+    expect([...bodies[1]]).toEqual([['ac', 'edit'], ['s', 'feed/5'], ['r', 'user/-/label/Tech'], ['T', 'T']]);
+  });
+
   it('unsubscribes with subscription/edit', async () => {
     const bodies: URLSearchParams[] = [];
     mockFetch((url, init) => {

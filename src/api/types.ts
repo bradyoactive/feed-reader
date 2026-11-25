@@ -13,6 +13,8 @@ export interface Feed {
   /** null when the server has the feed outside any category/folder. */
   categoryId: string | null;
   siteUrl?: string;
+  /** The address the server fetches the feed from. */
+  feedUrl?: string;
   /** A favicon the browser can load directly (FreshRSS serves these publicly). */
   iconUrl?: string;
   /** An icon that has to be fetched through the API with your login (Miniflux); see Backend.getFeedIcon. */
@@ -101,8 +103,21 @@ export interface ChangesQuery {
 /** An existing category, or a new one to create with this title. */
 export type CategoryChoice = { id: string } | { newTitle: string };
 
+/** A feed detail that can be changed after subscribing. */
+export type FeedField = 'title' | 'category' | 'feedUrl' | 'siteUrl';
+
+/** New values for a feed's details: only the ones that changed. */
+export interface FeedChanges {
+  title?: string;
+  category?: CategoryChoice;
+  feedUrl?: string;
+  siteUrl?: string;
+}
+
 export interface Backend {
   readonly kind: BackendKind;
+  /** The feed details this server lets an app change (see updateFeed). */
+  readonly editableFeedFields: ReadonlySet<FeedField>;
   getCategories(): Promise<Category[]>;
   getFeeds(): Promise<Feed[]>;
   /** Unread counts keyed by feed id. Feeds with zero may be missing. */
@@ -120,6 +135,8 @@ export interface Backend {
   subscribe(url: string, category: CategoryChoice): Promise<string>;
   /** Removes a feed. The server deletes its articles too. */
   unsubscribe(feedId: string): Promise<void>;
+  /** Changes a feed's details; `changes` holds only fields in editableFeedFields. The feed keeps its id. */
+  updateFeed(feed: Feed, changes: FeedChanges): Promise<void>;
   /** The icon for a feed's `iconId`, as a data: URL, or null if the server has none. */
   getFeedIcon?(iconId: string): Promise<string | null>;
 }

@@ -1,5 +1,5 @@
 import { tally } from '../lib/collections';
-import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed } from './types';
+import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, FeedChanges, FeedField } from './types';
 
 /** An in-memory server with sample data, so the UI can be tried without a real account. */
 
@@ -32,7 +32,12 @@ const FEEDS: Feed[] = [
   { id: 'fl', title: 'Fermentation Log', categoryId: 'cooking' },
 ];
 
-for (const f of FEEDS) f.iconUrl = ICONS[f.id];
+for (const f of FEEDS) {
+  const slug = f.title.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-');
+  f.iconUrl = ICONS[f.id];
+  f.siteUrl = `https://${slug}.example.com/`;
+  f.feedUrl = `https://${slug}.example.com/feed.xml`;
+}
 
 const SAMPLES: [string, string, string][] = [
   ['kw', 'Rewriting the scheduler: what changed this cycle, and why interactive latency finally feels different on desktop machines', 'The new scheduling class landed after three years of review. We walk through the design trade-offs, the benchmarks maintainers actually trusted, and the handful of workloads that still regress — plus how to tell whether your own machine is affected and which knobs are worth touching before you file a bug.'],
@@ -86,6 +91,7 @@ const wait = (ms = 150) => new Promise((r) => setTimeout(r, ms));
 
 export class DemoBackend implements Backend {
   readonly kind = 'demo' as const;
+  readonly editableFeedFields: ReadonlySet<FeedField> = new Set(['title', 'category', 'feedUrl', 'siteUrl']);
   private entries = buildEntries();
   private categories = CATEGORIES.map((c) => ({ ...c }));
   private feeds = FEEDS.map((f) => ({ ...f }));
@@ -107,8 +113,30 @@ export class DemoBackend implements Backend {
       categoryId = category.id;
     }
     const id = `u${++this.added}`;
-    this.feeds.push({ id, title: host, categoryId });
+    this.feeds.push({ id, title: host, categoryId, siteUrl: `https://${host}/`, feedUrl: url });
     return id;
+  }
+
+  async updateFeed(feed: Feed, { title, category, feedUrl, siteUrl }: FeedChanges): Promise<void> {
+    await wait(300);
+    const f = this.feeds.find((x) => x.id === feed.id);
+    if (!f) throw new Error('That feed no longer exists.');
+    if (feedUrl != null) {
+      try {
+        new URL(feedUrl);
+      } catch {
+        throw new Error('That doesn’t look like a web address.');
+      }
+    }
+    if (category) {
+      if ('newTitle' in category) {
+        f.categoryId = `c${++this.added}`;
+        this.categories.push({ id: f.categoryId, title: category.newTitle });
+      } else {
+        f.categoryId = category.id;
+      }
+    }
+    Object.assign(f, title != null && { title }, feedUrl != null && { feedUrl }, siteUrl != null && { siteUrl });
   }
 
   async unsubscribe(feedId: string): Promise<void> {

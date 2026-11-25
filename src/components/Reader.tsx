@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, CheckCheck, CircleDot, List, Menu, Star, type LucideIcon } from 'lucide-react';
+import { ArrowUp, CheckCheck, CircleDot, Info, List, Menu, Star, type LucideIcon } from 'lucide-react';
 import type { Filter, Scope } from '../api/types';
 import { describeError } from '../api/types';
 import {
@@ -22,6 +22,7 @@ import { navigate, routeHash, scopeExists, scopeKey, setRouteNames, useRoute } f
 import { nextScope } from '../lib/scopes';
 import { loadPref, savePref, type ConnectionConfig } from '../lib/storage';
 import { ArticleList, type NextView } from './ArticleList';
+import { FeedDetailsHost, showFeedDetails } from './FeedDetails';
 import { clampSidebar, Resizer, SIDEBAR_DEFAULT } from './Resizer';
 import { Sheet } from './Sheet';
 import { Sidebar } from './Sidebar';
@@ -458,6 +459,16 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
                 {parent}
                 {unreadInScope} unread
               </span>
+              {scope.kind === 'feed' && feedsById.has(scope.id) && (
+                <button
+                  onClick={() => showFeedDetails(scope.id)}
+                  aria-label="Feed details"
+                  title="Feed details"
+                  className="flex h-8 w-8 flex-none items-center justify-center self-center rounded-lg text-muted2 hover:bg-seg-bg hover:text-text"
+                >
+                  <Info size={17} aria-hidden />
+                </button>
+              )}
             </div>
             <FilterTabs filter={filter} scope={scope} />
             <button
@@ -487,6 +498,7 @@ export function Reader({ connection }: { connection: ConnectionConfig }) {
       >
         <Sidebar scope={scope} filter={filter} connection={connection} touch onPick={closeDrawer} />
       </Sheet>
+      <FeedDetailsHost scope={scope} filter={filter} />
     </div>
   );
 }

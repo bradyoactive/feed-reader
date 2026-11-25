@@ -6,9 +6,10 @@ import { useActions, usePendingCount, useSidebarCounts, useSidebarModel, useSync
 import { useVisitMemory } from '../hooks/visit';
 import { offlineLabel, useOnline } from '../lib/network';
 import { FeedIcon } from './FeedIcon';
-import { navigate, routeHash, scopeKey } from '../lib/route';
+import { routeHash, scopeKey } from '../lib/route';
 import { AddFeedDialog } from './AddFeedDialog';
-import { FeedMenu, UnsubscribeConfirm } from './FeedMenu';
+import { showFeedDetails } from './FeedDetails';
+import { FeedMenu, UnsubscribeConfirm, useUnsubscribeFeed } from './FeedMenu';
 import { loadPref, loadTheme, savePref, saveTheme, type ConnectionConfig, type Theme } from '../lib/storage';
 
 interface Props {
@@ -93,7 +94,7 @@ interface FeedRowProps {
 function FeedRow({ feed, href, selected, confirming, count, touch, onPick, onUnsubscribe }: FeedRowProps) {
   const online = useOnline();
   return (
-    <FeedMenu feed={feed} onUnsubscribe={onUnsubscribe} disabled={!online}>
+    <FeedMenu feed={feed} onDetails={(f) => showFeedDetails(f.id)} onUnsubscribe={onUnsubscribe} disabled={!online}>
       <a
         href={href}
         onClick={() => onPick?.()}
@@ -114,7 +115,8 @@ function FeedRow({ feed, href, selected, confirming, count, touch, onPick, onUns
 export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
   const model = useSidebarModel();
   const counts = useSidebarCounts(filter);
-  const { sync, unsubscribe } = useActions();
+  const { sync } = useActions();
+  const unsubscribe = useUnsubscribeFeed(scope, filter);
   const { open, toggle, ensure } = useOpenCategories();
   const [adding, setAdding] = useState(false);
   const [confirming, setConfirming] = useState<Feed | null>(null);
@@ -192,11 +194,6 @@ export function Sidebar({ scope, filter, connection, onPick, touch }: Props) {
             const feed = confirming;
             setConfirming(null);
             unsubscribe(feed);
-            // If you were reading that feed, move to its category (or everything).
-            if (scope.kind === 'feed' && scope.id === feed.id) {
-              const rest = feed.categoryId ? (model?.feedsByCategory.get(feed.categoryId) ?? []).filter((f) => f.id !== feed.id) : [];
-              navigate(routeHash(rest.length && feed.categoryId ? { kind: 'category', id: feed.categoryId } : { kind: 'all' }, filter));
-            }
           }}
         />
       )}

@@ -1,9 +1,13 @@
 import type { ReactNode } from 'react';
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { CircleMinus } from 'lucide-react';
-import type { Feed } from '../api/types';
-import { useStarredCounts, useTotalCounts } from '../hooks/data';
+import { CircleMinus, Info } from 'lucide-react';
+import type { Feed, Filter, Scope } from '../api/types';
+import { useActions, useSidebarModel, useStarredCounts, useTotalCounts } from '../hooks/data';
+import { navigate, routeHash } from '../lib/route';
+
+const itemClass =
+  'flex h-9 w-full cursor-default items-center gap-2.5 rounded-[7px] px-2.5 text-sm font-medium outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-seg-bg';
 
 /**
  * A feed's menu: right-click (mouse) or long-press (touch) on `children`, which must be a single element
@@ -11,11 +15,13 @@ import { useStarredCounts, useTotalCounts } from '../hooks/data';
  */
 export function FeedMenu({
   feed,
+  onDetails,
   onUnsubscribe,
   disabled,
   children,
 }: {
   feed: Feed;
+  onDetails(feed: Feed): void;
   onUnsubscribe(feed: Feed): void;
   /** Offline: unsubscribing needs the server, so the item is shown but can't be picked. */
   disabled?: boolean;
@@ -30,11 +36,12 @@ export function FeedMenu({
           collisionPadding={8}
           className="z-50 w-[230px] rounded-[10px] border border-border bg-bg p-[5px] shadow-[0_12px_32px_rgb(0_0_0/0.18)]"
         >
-          <ContextMenu.Item
-            disabled={disabled}
-            onSelect={() => onUnsubscribe(feed)}
-            className="flex h-9 w-full cursor-default items-center gap-2.5 rounded-[7px] px-2.5 text-sm font-medium text-err-fg outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-seg-bg"
-          >
+          <ContextMenu.Item onSelect={() => onDetails(feed)} className={`${itemClass} text-text`}>
+            <Info size={16} aria-hidden />
+            Feed details…
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="mx-1 my-[5px] h-px bg-border" />
+          <ContextMenu.Item disabled={disabled} onSelect={() => onUnsubscribe(feed)} className={`${itemClass} text-err-fg`}>
             <CircleMinus size={16} aria-hidden />
             {disabled ? 'Unsubscribe (needs a connection)' : 'Unsubscribe…'}
           </ContextMenu.Item>
@@ -80,4 +87,17 @@ export function UnsubscribeConfirm({ feed, onConfirm, onClose }: { feed: Feed; o
       </AlertDialog.Portal>
     </AlertDialog.Root>
   );
+}
+
+/** Unsubscribes from a feed; if you were reading it, moves to the rest of its category (or everything). */
+export function useUnsubscribeFeed(scope: Scope, filter: Filter): (feed: Feed) => void {
+  const { unsubscribe } = useActions();
+  const model = useSidebarModel();
+  return (feed) => {
+    unsubscribe(feed);
+    if (scope.kind === 'feed' && scope.id === feed.id) {
+      const rest = feed.categoryId ? (model?.feedsByCategory.get(feed.categoryId) ?? []).filter((f) => f.id !== feed.id) : [];
+      navigate(routeHash(rest.length && feed.categoryId ? { kind: 'category', id: feed.categoryId } : { kind: 'all' }, filter));
+    }
+  };
 }

@@ -42,6 +42,8 @@ function server(entries: Entry[]) {
     setStarred: vi.fn(async () => {}),
     subscribe: vi.fn(async () => 'f2'),
     unsubscribe: vi.fn(async () => {}),
+    editableFeedFields: new Set(['title', 'category', 'feedUrl', 'siteUrl'] as const),
+    updateFeed: vi.fn(async () => {}),
   };
 }
 
@@ -181,5 +183,16 @@ describe('Syncer', () => {
     await syncer.removeFeed({ id: 'f1', title: 'F', categoryId: 'c1' });
     expect(store.has('1')).toBe(false);
     expect(b.unsubscribe).toHaveBeenCalledWith('f1');
+  });
+
+  it('saves a feed’s new details on the server, then reloads the feed list', async () => {
+    const b = server([]);
+    const { store, syncer } = await setup(b);
+    const feed = { id: 'f1', title: 'F', categoryId: 'c1' };
+    store.setMeta({ feeds: [feed] });
+    vi.mocked(b.getFeeds).mockResolvedValueOnce([{ ...feed, title: 'Renamed' }]);
+    await syncer.editFeed(feed, { title: 'Renamed' });
+    expect(b.updateFeed).toHaveBeenCalledWith(feed, { title: 'Renamed' });
+    expect(store.getMeta('feeds')?.[0].title).toBe('Renamed');
   });
 });

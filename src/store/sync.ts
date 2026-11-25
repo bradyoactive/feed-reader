@@ -296,6 +296,17 @@ export class Syncer {
   /** Subscribes, then reloads the feed list and counts. Resolves to the new feed's id. */
   async addFeed(...args: Parameters<Backend['subscribe']>): Promise<string> {
     const id = await this.backend.subscribe(...args);
+    await this.reloadFeeds();
+    return id;
+  }
+
+  /** Changes a feed's details on the server, then reloads the feed list (the server may tidy what it was sent). */
+  async editFeed(...args: Parameters<Backend['updateFeed']>): Promise<void> {
+    await this.backend.updateFeed(...args);
+    await this.reloadFeeds();
+  }
+
+  private async reloadFeeds() {
     const asked = Date.now();
     const [categories, feeds, unread, total] = await Promise.all([
       this.backend.getCategories(),
@@ -305,7 +316,6 @@ export class Syncer {
     ]);
     this.store.setFeeds(sortFeeds(feeds), categories);
     this.store.setServerCounts(unread, total, asked);
-    return id;
   }
 
   /** Forgets the feed here at once, then tells the server; if it refuses, everything is synced again. */

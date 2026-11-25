@@ -77,7 +77,10 @@ Behaviour worth knowing:
   feeds listed for the same reason.
 - Marking articles read or starred works without a connection: the change shows at once, is saved on the
   device, and is sent (in order) when the server can be reached again, even after closing the app.
-- Adding a feed and unsubscribing need a connection. Articles open on their own site, which needs one too.
+- **Feed details** (right-click or long-press a feed, or the ⓘ beside a feed's name in the bottom bar) shows its
+  name, category, feed address, website and counts, and lets you change them. Miniflux lets you change all four;
+  Google Reader API servers only the name and category, so the addresses are shown read-only there.
+- Adding a feed, editing its details and unsubscribing need a connection. Articles open on their own site, which needs one too.
 - **Read above / below** act on the articles loaded in the current view, in on-screen order.
 - **Mark all read** marks the articles loaded in the current view read (anything further down that isn't loaded yet
   stays unread), then moves to the next feed or category that still has items under the current filter.

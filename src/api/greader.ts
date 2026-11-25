@@ -2,7 +2,7 @@ import { chunks, tally } from '../lib/collections';
 import { parseArticle, safeUrl } from '../lib/html';
 import { joinUrl, request, responseError, send } from './http';
 import { AuthError, UNCATEGORIZED } from './types';
-import type { Backend, Category, CategoryChoice, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, IdList } from './types';
+import type { Backend, Category, CategoryChoice, FeedChanges, FeedField, Changes, ChangesQuery, Entry, EntryPage, EntryQuery, EntryRef, Feed, IdList } from './types';
 
 const PAGE_SIZE = 50;
 const READING_LIST = 'user/-/state/com.google/reading-list';
@@ -22,6 +22,8 @@ interface GrSubscription {
   id: string;
   title: string;
   htmlUrl?: string;
+  /** The feed's own address (FreshRSS, Miniflux); not in the original API. */
+  url?: string;
   iconUrl?: string;
   categories?: { id: string; label?: string }[];
 }
@@ -60,6 +62,12 @@ export async function greaderLogin(url: string, username: string, password: stri
   return auth;
 }
 
+/** Google Reader's own feed ids are "feed/" + the feed's address; other servers use "feed/" + a number. */
+function feedUrlFromId(id: string): string | undefined {
+  const rest = id.startsWith('feed/') ? id.slice(5) : '';
+  return /^https?:\/\//i.test(rest) ? rest : undefined;
+}
+
 const ITEM_PREFIX = 'tag:google.com,2005:reader/item/';
 
 /**
@@ -94,6 +102,8 @@ export function toEntry(item: GrItem): Entry {
 
 export class GReaderBackend implements Backend {
   readonly kind = 'greader' as const;
+  /** The API can rename a subscription and move it between folders, but has no way to change its addresses. */
+  readonly editableFeedFields: ReadonlySet<FeedField> = new Set(['title', 'category']);
   private readonly config: GReaderConfig;
   private writeToken: string | null = null;
 
@@ -160,6 +170,19 @@ export class GReaderBackend implements Backend {
     this.subscriptions = null;
   }
 
+  async updateFeed(feed: Feed, { title, category }: FeedChanges): Promise<void> {
+    const params: [string, string][] = [['ac', 'edit'], ['s', feed.id]];
+    if (title != null) params.push(['t', title]);
+    if (category) {
+      const label = 'newTitle' in category ? `user/-/label/${category.newTitle}` : category.id !== UNCATEGORIZED ? category.id : null;
+      // Out of the old folder, into the new one (a feed is in one folder here).
+      if (feed.categoryId && feed.categoryId !== UNCATEGORIZED && feed.categoryId !== label) params.push(['r', feed.categoryId]);
+      if (label) params.push(['a', label]);
+    }
+    await this.post('/reader/api/0/subscription/edit', params);
+    this.subscriptions = null;
+  }
+
   private subscriptions: Promise<GrSubscription[]> | null = null;
   private loadSubscriptions(): Promise<GrSubscription[]> {
     this.subscriptions ??= this.get<{ subscriptions: GrSubscription[] }>('/reader/api/0/subscription/list')
@@ -194,6 +217,7 @@ export class GReaderBackend implements Backend {
       title: s.title,
       categoryId: s.categories?.find((c) => c.id.includes('/label/'))?.id ?? UNCATEGORIZED,
       siteUrl: s.htmlUrl,
+      feedUrl: s.url ?? feedUrlFromId(s.id),
       iconUrl: safeUrl(s.iconUrl, this.config.url),
     }));
   }
